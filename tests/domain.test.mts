@@ -169,3 +169,34 @@ test("all feasible grid scenarios obey consent alternatives, capacity and budget
         );
       }
 });
+test("with two alternatives the planner skips the one that clashes", () => {
+  const s = seed();
+  assert.deepEqual(s.bookings[0].alternatives, [
+    { start: 780, refund: 1500 },
+    { start: 960, refund: 2000 },
+  ]);
+  // Even when 4 pm is the cheaper option for Alex, it clashes with Sam's only
+  // alternative, and Sam staying at 3 pm overlaps Maya's 2–4 pm request.
+  s.bookings[0].alternatives = [
+    { start: 780, refund: 1500 },
+    { start: 960, refund: 500 },
+  ];
+  const out = solve(s.bookings, s.request);
+  assert.deepEqual(
+    out?.choices.map((c) => [c.bookingId, c.start, c.refund]),
+    [
+      ["alex", 780, 1500],
+      ["sam", 960, 1000],
+    ],
+  );
+  assert.equal(out?.cost, 2500);
+  // Once Sam can also take 1 pm, the cheaper pairing uses Alex's 4 pm.
+  s.bookings[1].alternatives.push({ start: 780, refund: 1000 });
+  assert.deepEqual(
+    solve(s.bookings, s.request)?.choices.map((c) => [c.bookingId, c.start]),
+    [
+      ["alex", 960],
+      ["sam", 780],
+    ],
+  );
+});

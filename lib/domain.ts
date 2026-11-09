@@ -156,8 +156,12 @@ export function seed(): Studio {
         prepaid: 6000,
         refunded: 0,
         color: "apricot",
-        preference: "I can move to 1 pm for $15 back.",
-        alternatives: [{ start: 780, refund: 1500 }],
+        preference:
+          "Thursday's a bit tight with school pickup. I can come in at 1 for $15 back. 4 would work too, but I'd want $20 for that one. 4:30 is fine as well, same $20.",
+        alternatives: [
+          { start: 780, refund: 1500 },
+          { start: 960, refund: 2000 },
+        ],
         preferenceSource: "reviewed",
       },
       {
