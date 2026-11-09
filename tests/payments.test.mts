@@ -4,6 +4,7 @@ import { PayPal, PayPalError, type PayPalResource } from "../lib/paypal.ts";
 import { createPayments } from "../lib/payments-core.ts";
 import {
   assertEditable,
+  commit,
   consent,
   propose,
   seed,
@@ -31,6 +32,7 @@ const VOID = "POST /v2/payments/authorizations/AUTH/void";
 const GET_CAP = "GET /v2/payments/captures/CAPN";
 const REFUND_A = "POST /v2/payments/captures/CAP-A/refund";
 const REFUND_B = "POST /v2/payments/captures/CAP-B/refund";
+const GET_REFUND_A = "GET /v2/payments/refunds/RA";
 
 const ORDER_PAYER = {
   id: "ORD",
@@ -87,6 +89,13 @@ function authorized(s: Studio) {
   s.plan!.status = "authorized";
   s.plan!.authorizationId = "AUTH";
   delete s.plan!.approvalUrl;
+}
+/** Booking confirmed against CAPN; refunds not yet attempted. */
+function committed(s: Studio) {
+  authorized(s);
+  s.plan!.captureId = "CAPN";
+  s.plan!.captureStatus = "COMPLETED";
+  commit(s);
 }
 function setup(
   shape: (s: Studio) => void = () => {},
@@ -608,6 +617,186 @@ test("V5: a void refused as previously captured goes to review and reconcile com
   const s = await payments.reconcile(OWNER);
   assert.equal(s.plan!.status, "complete");
   assert.deepEqual(starts(s), [780, 960]);
+  done(fake);
+});
+
+// Refunds
+
+test("F1: a refused refund does not block the other customer's refund", async () => {
+  const { fake, payments, studio } = setup(authorized);
+  fake.on(CAPTURE, ok(CAP("COMPLETED"), 201)).on(GET_CAP, ok(CAP("COMPLETED")));
+  refundsComplete(fake, err(422, "TRANSACTION_REFUSED"));
+  await assert.rejects(
+    payments.captureAndSettle(OWNER),
+    /Booking confirmed\. Some refunds need attention: .*TRANSACTION_REFUSED/,
+  );
+  let s = studio();
+  const [alex, sam] = s.plan!.moves;
+  assert.equal(s.plan!.status, "settling");
+  assert.match(s.plan!.error ?? "", /Some refunds need attention/);
+  assert.equal(alex.refundStatus, "REJECTED");
+  assert.equal(alex.refundError, "TRANSACTION_REFUSED");
+  assert.equal(sam.refundStatus, "COMPLETED");
+  assert.deepEqual(starts(s), [780, 960]);
+  assert.deepEqual(refunded(s), [0, 1000]);
+  assert.equal(fake.to(REFUND_A).length, 1);
+
+  // The next check retries once with a new key, since PayPal refused the first.
+  fake
+    .on(GET_CAP, ok(CAP("COMPLETED")))
+    .on(REFUND_A, ok(REF("RA", "COMPLETED", "15.00"), 201));
+  s = await payments.reconcile(OWNER);
+  assert.equal(s.plan!.status, "complete");
+  assert.equal(s.plan!.error, undefined);
+  assert.deepEqual(refunded(s), [1500, 1000]);
+  const [first, second] = fake.to(REFUND_A).map((c) => c.key);
+  assert.equal(first, alex.refundKey);
+  assert.equal(second, s.plan!.moves[0].refundKey);
+  assert.notEqual(first, second);
+  done(fake);
+});
+
+test("F2: a failed refund is confirmed and retried with a new key", async () => {
+  const { fake, payments, studio } = setup(authorized);
+  fake.on(CAPTURE, ok(CAP("COMPLETED"), 201)).on(GET_CAP, ok(CAP("COMPLETED")));
+  refundsComplete(fake, ok(REF("RA", "FAILED", "15.00"), 201));
+  await assert.rejects(
+    payments.captureAndSettle(OWNER),
+    /Some refunds need attention: Alex: PayPal reported the refund as failed/,
+  );
+  let s = studio();
+  const firstKey = s.plan!.moves[0].refundKey;
+  assert.equal(s.plan!.moves[0].refundStatus, "FAILED");
+  assert.equal(s.plan!.moves[1].refundStatus, "COMPLETED");
+  assert.equal(s.plan!.status, "settling");
+
+  fake.reset();
+  fake
+    .on(GET_CAP, ok(CAP("COMPLETED")))
+    .on(GET_REFUND_A, ok(REF("RA", "FAILED", "15.00")))
+    .on(REFUND_A, ok(REF("RA2", "COMPLETED", "15.00"), 201));
+  s = await payments.reconcile(OWNER);
+  const alex = s.plan!.moves[0];
+  assert.deepEqual(fake.routes(), [GET_CAP, GET_REFUND_A, REFUND_A]);
+  assert.notEqual(fake.to(REFUND_A)[0].key, firstKey);
+  assert.equal(fake.to(REFUND_A)[0].key, alex.refundKey);
+  assert.equal(s.plan!.status, "complete");
+  assert.equal(alex.refundId, "RA2");
+  assert.deepEqual(alex.previousRefundIds, ["RA"]);
+  assert.deepEqual(refunded(s), [1500, 1000]);
+  done(fake);
+});
+
+test("F2: a failed refund that PayPal later completed is recorded, not repeated", async () => {
+  const { fake, payments } = setup((s) => {
+    committed(s);
+    const [alex, sam] = s.plan!.moves;
+    Object.assign(alex, { refundId: "RA", refundStatus: "FAILED" });
+    Object.assign(sam, { refundId: "RB", refundStatus: "COMPLETED" });
+    s.bookings[1].refunded = 1000;
+  });
+  fake
+    .on(GET_CAP, ok(CAP("COMPLETED")))
+    .on(GET_REFUND_A, ok(REF("RA", "COMPLETED", "15.00")));
+  const s = await payments.reconcile(OWNER);
+  assert.equal(s.plan!.status, "complete");
+  assert.deepEqual(refunded(s), [1500, 1000]);
+  assert.equal(fake.to(REFUND_A).length, 0);
+  done(fake);
+});
+
+test("F3: a refund timeout keeps its key and is repeated on the next check", async () => {
+  const { fake, payments, studio } = setup(authorized);
+  fake.on(CAPTURE, ok(CAP("COMPLETED"), 201)).on(GET_CAP, ok(CAP("COMPLETED")));
+  refundsComplete(fake, TIMEOUT);
+  await assert.rejects(
+    payments.captureAndSettle(OWNER),
+    /Some refunds need attention/,
+  );
+  let s = studio();
+  assert.equal(s.plan!.moves[0].refundStatus, "REQUESTED");
+  assert.equal(s.plan!.moves[1].refundStatus, "COMPLETED");
+  assert.equal(s.plan!.status, "settling");
+
+  fake
+    .on(GET_CAP, ok(CAP("COMPLETED")))
+    .on(REFUND_A, ok(REF("RA", "COMPLETED", "15.00"), 201));
+  s = await payments.reconcile(OWNER);
+  assert.equal(s.plan!.status, "complete");
+  const keys = fake.to(REFUND_A).map((c) => c.key);
+  assert.deepEqual(keys, [s.plan!.moves[0].refundKey, s.plan!.moves[0].refundKey]);
+  assert.deepEqual(refunded(s), [1500, 1000]);
+  done(fake);
+});
+
+test("F4: a pending refund is read back and counted once", async () => {
+  const { fake, payments } = setup(authorized);
+  fake.on(CAPTURE, ok(CAP("COMPLETED"), 201)).on(GET_CAP, ok(CAP("COMPLETED")));
+  refundsComplete(fake, ok(REF("RA", "PENDING", "15.00"), 201));
+  let s = await payments.captureAndSettle(OWNER);
+  assert.equal(s.plan!.status, "settling");
+  assert.equal(s.plan!.error, undefined, "pending is progress, not a problem");
+  assert.deepEqual(refunded(s), [0, 1000]);
+
+  fake
+    .on(GET_CAP, ok(CAP("COMPLETED")))
+    .on(GET_REFUND_A, ok(REF("RA", "COMPLETED", "15.00")));
+  s = await payments.reconcile(OWNER);
+  assert.equal(s.plan!.status, "complete");
+  assert.deepEqual(refunded(s), [1500, 1000]);
+  assert.equal(fake.to(REFUND_A).length, 1);
+  done(fake);
+});
+
+test("F5: an old refund with an unknown result is flagged, not repeated", async () => {
+  const { fake, payments, studio } = setup((s) => {
+    committed(s);
+    s.plan!.moves[0].refundStatus = "REQUESTED";
+    s.plan!.moves[0].refundAttemptAt = new Date(
+      Date.now() - 6 * 60 * 60_000,
+    ).toISOString();
+  });
+  fake
+    .on(GET_CAP, ok(CAP("COMPLETED")))
+    .on(REFUND_B, ok(REF("RB", "COMPLETED", "10.00"), 201));
+  await assert.rejects(
+    payments.reconcile(OWNER),
+    /Alex: An earlier refund has an unknown result/,
+  );
+  let s = studio();
+  assert.equal(s.plan!.moves[0].refundStatus, "UNKNOWN");
+  assert.equal(s.plan!.moves[1].refundStatus, "COMPLETED");
+  assert.equal(fake.to(REFUND_A).length, 0);
+
+  // Manual review: later checks still leave Alex's refund alone.
+  fake.on(GET_CAP, ok(CAP("COMPLETED")));
+  await assert.rejects(payments.reconcile(OWNER), /Some refunds need attention/);
+  s = studio();
+  assert.equal(s.plan!.status, "settling");
+  assert.equal(fake.to(REFUND_A).length, 0);
+  done(fake);
+});
+
+test("F6: a refund with the wrong amount is flagged and not retried", async () => {
+  const { fake, payments, studio } = setup(authorized);
+  fake.on(CAPTURE, ok(CAP("COMPLETED"), 201)).on(GET_CAP, ok(CAP("COMPLETED")));
+  refundsComplete(fake, ok(REF("RA", "COMPLETED", "16.00"), 201));
+  await assert.rejects(
+    payments.captureAndSettle(OWNER),
+    /Alex: PayPal returned a different refund amount/,
+  );
+  let s = studio();
+  const alex = s.plan!.moves[0];
+  assert.equal(alex.refundStatus, "UNKNOWN");
+  assert.equal(alex.refundId, "RA");
+  assert.equal(s.plan!.moves[1].refundStatus, "COMPLETED");
+  assert.deepEqual(refunded(s), [0, 1000]);
+
+  fake.on(GET_CAP, ok(CAP("COMPLETED")));
+  await assert.rejects(payments.reconcile(OWNER), /Some refunds need attention/);
+  s = studio();
+  assert.equal(fake.to(REFUND_A).length, 1);
+  assert.equal(fake.to(GET_REFUND_A).length, 0);
   done(fake);
 });
 

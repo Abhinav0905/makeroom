@@ -9,6 +9,7 @@ import {
   event,
   id,
   money,
+  type Move,
   type Studio,
 } from "./domain.ts";
 export type PaymentsDeps = {
@@ -36,6 +37,8 @@ const PLAN_REVIEW_KINDS = [
 ];
 const FUNDING_KINDS = ["fund-booking", "capture-prepayment"];
 const FAILED_CAPTURE = ["DECLINED", "FAILED"];
+const FAILED_REFUND = ["FAILED", "CANCELLED"];
+const RETRY_REFUND = [...FAILED_REFUND, "REJECTED"];
 function approval(r: PayPalResource) {
   const url = r.links?.find((l) =>
     ["payer-action", "approve"].includes(l.rel),
@@ -65,6 +68,18 @@ function captureProblem(status: string) {
     "PayPal reports this payment as " +
     status.toLowerCase() +
     ". No appointment has moved. Use Check payment."
+  );
+}
+// A 4xx means PayPal refused the request outright, so a new key cannot repeat
+// money movement. 409 and 429 are "try again later", like a timeout.
+function definitelyRefused(e: unknown): e is PayPalError {
+  return (
+    e instanceof PayPalError &&
+    !e.uncertain &&
+    e.status >= 400 &&
+    e.status < 500 &&
+    e.status !== 409 &&
+    e.status !== 429
   );
 }
 export function createPayments(deps: PaymentsDeps) {
@@ -333,44 +348,48 @@ export function createPayments(deps: PaymentsDeps) {
     });
     return a.id;
   }
-  async function refundMoves(snapshot: Studio, save: Save, api: PayPal) {
-    for (const move of snapshot.plan!.moves) {
-      if (move.refundStatus === "COMPLETED") continue;
-      if (move.refund === 0) {
-        await save((s) => {
-          s.plan!.moves.find(
-            (m) => m.bookingId === move.bookingId,
-          )!.refundStatus = "COMPLETED";
-        });
-        continue;
-      }
-      if (move.refundStatus === "FAILED" || move.refundStatus === "CANCELLED")
-        continue;
-      const booking = snapshot.bookings.find((b) => b.id === move.bookingId)!;
-      if (!booking.captureId)
-        throw new DomainError("Original payment reference is missing.");
-      if (
-        !move.refundId &&
-        move.refundAttemptAt &&
-        now() - Date.parse(move.refundAttemptAt) > 5 * 60 * 60_000
-      )
-        throw new DomainError(
-          "An earlier refund has an unknown result. Check it in PayPal before making another refund.",
+  // One move's refund. Problems are returned, not thrown, so one customer's
+  // refund cannot block another's. Errors from save() still propagate: a lost
+  // payment lock must stop the whole pass.
+  async function refundMove(
+    move: Move,
+    captureId: string | undefined,
+    save: Save,
+    api: PayPal,
+  ): Promise<string | undefined> {
+    const update = (fn: (m: Move, s: Studio) => void) =>
+      save((s) =>
+        fn(s.plan!.moves.find((m) => m.bookingId === move.bookingId)!, s),
+      );
+    // UNKNOWN needs a person to look in PayPal; it is never retried here.
+    const manual = async (message: string, refundId?: string) => {
+      await update((m, s) => {
+        m.refundStatus = "UNKNOWN";
+        m.refundError = message;
+        if (refundId) m.refundId = refundId;
+        event(
+          s,
+          "Refund needs manual review",
+          move.name + ": " + message,
+          "notice",
         );
-      await save((s) => {
-        const m = s.plan!.moves.find((m) => m.bookingId === move.bookingId)!;
-        m.refundAttemptAt ??= new Date(now()).toISOString();
-        m.refundStatus ??= "REQUESTED";
       });
-      const r = move.refundId
-        ? await api.getRefund(move.refundId)
-        : await api.refund(booking.captureId, move.refund, move.refundKey);
-      confirmedAmount(r, move.refund);
-      await save((s) => {
-        const m = s.plan!.moves.find((m) => m.bookingId === move.bookingId)!;
+      return message;
+    };
+    const record = async (r: PayPalResource) => {
+      try {
+        confirmedAmount(r, move.refund);
+      } catch {
+        return manual(
+          "PayPal returned a different refund amount. Check it in PayPal.",
+          r.id,
+        );
+      }
+      await update((m, s) => {
         const wasComplete = m.refundStatus === "COMPLETED";
         m.refundId = r.id;
         m.refundStatus = r.status;
+        delete m.refundError;
         if (r.status === "COMPLETED" && !wasComplete)
           s.bookings.find((b) => b.id === m.bookingId)!.refunded += m.refund;
         event(
@@ -382,15 +401,116 @@ export function createPayments(deps: PaymentsDeps) {
           "payment",
         );
       });
+      if (FAILED_REFUND.includes(r.status))
+        return (
+          "PayPal reported the refund as " +
+          r.status.toLowerCase() +
+          ". Use Check payment & refunds to try again."
+        );
+    };
+    // Timeouts, 5xx, 409 and 429 leave the result unknown: keep REQUESTED and
+    // the same key so the next check repeats the identical request.
+    const unsure = (e: unknown) =>
+      e instanceof Error ? e.message : "PayPal's response did not arrive.";
+    if (move.refundStatus === "UNKNOWN")
+      return move.refundError ?? "Check this refund in PayPal.";
+    if (!captureId) return manual("Original payment reference is missing.");
+    let refundId = move.refundId;
+    let key = move.refundKey;
+    if (RETRY_REFUND.includes(move.refundStatus ?? "")) {
+      if (refundId) {
+        let r: PayPalResource;
+        try {
+          r = await api.getRefund(refundId);
+        } catch (e) {
+          return unsure(e);
+        }
+        if (!FAILED_REFUND.includes(r.status)) return record(r);
+      }
+      // PayPal definitely did not pay this refund. The old key would only
+      // replay that answer, so retry once with a new one.
+      key = id();
+      refundId = undefined;
+      await update((m) => {
+        if (m.refundId) (m.previousRefundIds ??= []).push(m.refundId);
+        m.refundKey = key;
+        delete m.refundId;
+        delete m.refundStatus;
+        delete m.refundAttemptAt;
+        delete m.refundError;
+      });
+    } else if (
+      !refundId &&
+      move.refundAttemptAt &&
+      now() - Date.parse(move.refundAttemptAt) > 5 * 60 * 60_000
+    )
+      return manual(
+        "An earlier refund has an unknown result. Check it in PayPal before making another refund.",
+      );
+    await update((m) => {
+      m.refundAttemptAt ??= new Date(now()).toISOString();
+      m.refundStatus ??= "REQUESTED";
+    });
+    let r: PayPalResource;
+    try {
+      r = refundId
+        ? await api.getRefund(refundId)
+        : await api.refund(captureId, move.refund, key);
+    } catch (e) {
+      if (refundId || !definitelyRefused(e)) return unsure(e);
+      const issue = e.issue ?? "REQUEST_FAILED";
+      await update((m, s) => {
+        m.refundStatus = "REJECTED";
+        m.refundError = issue;
+        event(
+          s,
+          "Refund rejected",
+          move.name +
+            ": PayPal refused the " +
+            money(move.refund) +
+            " refund (" +
+            issue +
+            ").",
+          "notice",
+        );
+      });
+      return (
+        "PayPal refused the refund (" +
+        issue +
+        "). Use Check payment & refunds to try again."
+      );
     }
+    return record(r);
+  }
+  async function refundMoves(snapshot: Studio, save: Save, api: PayPal) {
+    const problems: string[] = [];
+    for (const move of snapshot.plan!.moves) {
+      if (move.refundStatus === "COMPLETED") continue;
+      if (move.refund === 0) {
+        await save((s) => {
+          s.plan!.moves.find(
+            (m) => m.bookingId === move.bookingId,
+          )!.refundStatus = "COMPLETED";
+        });
+        continue;
+      }
+      const booking = snapshot.bookings.find((b) => b.id === move.bookingId)!;
+      const problem = await refundMove(move, booking.captureId, save, api);
+      if (problem) problems.push(move.name.split(" ")[0] + ": " + problem);
+    }
+    const message = problems.length
+      ? "Booking confirmed. Some refunds need attention: " + problems.join(" ")
+      : undefined;
     await save((s) => {
       s.plan!.status = s.plan!.moves.every(
         (m) => m.refundStatus === "COMPLETED",
       )
         ? "complete"
         : "settling";
-      delete s.plan!.error;
+      if (message) s.plan!.error = message;
+      else delete s.plan!.error;
     });
+    if (message) throw new DomainError(message);
   }
   // A COMPLETED capture: confirm the booking and pay the agreed refunds.
   async function settle(

@@ -48,6 +48,8 @@ export type Move = {
   refundId?: string;
   refundStatus?: string;
   refundAttemptAt?: string;
+  refundError?: string;
+  previousRefundIds?: string[];
 };
 export type Plan = {
   id: string;
