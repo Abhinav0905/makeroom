@@ -27,7 +27,7 @@ The video also opens both refund responses in PayPal's dashboard. Each has its o
 
 ## Second run, recorded for the video (November 9, 2026)
 
-The updated code ran the same flow again in a fresh local workspace, with no link to the November 8 records. This time the PayPal checkout itself is on camera: each customer paid as a guest on PayPal's sandbox checkout page with a published sandbox test card. The capture and both partial refunds were then read back from PayPal:
+The updated code ran the same flow again in a fresh local workspace, with no link to the November 8 records. This time the PayPal checkout itself is on camera: each customer paid as a guest on PayPal's sandbox checkout page with a published sandbox test card. Every order, authorization, capture and refund was then read back from PayPal:
 
 | Result | PayPal ID | Amount | Readback status |
 | --- | --- | --- | --- |
