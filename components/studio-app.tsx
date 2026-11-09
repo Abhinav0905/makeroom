@@ -29,6 +29,7 @@ import { seed, money, time, type Studio } from "@/lib/domain";
 import StudioCalendar from "./studio-calendar";
 import PreferenceEditor from "./preference-editor";
 type Integrations = {
+  guest?: boolean;
   paypal: boolean;
   ai: boolean;
   aiProvider: string | null;
@@ -262,6 +263,9 @@ export default function StudioApp() {
             How it works
             <ArrowUpRight size={15} />
           </button>
+          <a className="nav-item" href="/proof">
+            Sandbox evidence <ArrowUpRight size={15} />
+          </a>
           <div className="studio-profile">
             <span className="avatar forest">OL</span>
             <div>
@@ -308,6 +312,12 @@ export default function StudioApp() {
           </div>
         </header>
         <main className="main-content">
+          {integrations.guest && (
+            <div className="notice-banner" role="status">
+              Your own practice studio. Try AI, approve both customer offers,
+              then complete the simulated booking. No sign-in needed.
+            </div>
+          )}
           {login && (
             <div className="login-banner">
               <div>
@@ -926,6 +936,7 @@ export default function StudioApp() {
                     disabled={
                       disabled ||
                       !integrations.paypal ||
+                      !!integrations.guest ||
                       studio.mode === "sandbox"
                     }
                     onClick={() => act("mode", { mode: "sandbox" })}
@@ -935,6 +946,26 @@ export default function StudioApp() {
                       : "Use PayPal sandbox"}
                     <ArrowRight size={16} />
                   </button>
+                  {integrations.guest && (
+                    <p>
+                      Guest payments are simulated.{" "}
+                      <a
+                        href="/signin-with-chatgpt?return_to=%2F"
+                        target="_top"
+                      >
+                        Sign in
+                      </a>{" "}
+                      for a separate PayPal sandbox workspace, or follow the{" "}
+                      <a
+                        href="https://github.com/Abhinav0905/makeroom#run-locally"
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        local setup
+                      </a>{" "}
+                      with your own test accounts.
+                    </p>
+                  )}
                   {!integrations.paypal && (
                     <details>
                       <summary>Connection instructions</summary>

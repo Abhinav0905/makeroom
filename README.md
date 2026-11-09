@@ -6,9 +6,17 @@ MakeRoom helps a small studio fit a new booking into a fragmented calendar. It r
 
 The example is narrow on purpose: one photography room, two prepaid appointments and one new request on November 12, 2026. Alex moves 2 pm to 1 pm for $15 back; Sam moves 3 pm to 4 pm for $10 back. Maya can then book 2–4 pm for $145. The studio adds $120 in gross booking revenue before fees and taxes.
 
+## Try the public demo
+
+Open [MakeRoom](https://makeroom-studio.abhinav-0905.chatgpt.site). No account or API key is needed for the guest practice studio. Each browser gets a separate fictional studio, saved in an HttpOnly cookie for one day. Practice payments are simulated. The AI reader makes actual Gemini calls, limited to 20 per studio and 200 across the demo per UTC day; reviewed terms and the planner work after that allowance is used.
+
+Choose **Customers**, read Alex's message with AI and review/save the result. Return to **Studio day**, find an arrangement, open and accept both customer offers, then complete the practice booking. Reset in **Connections** to try a $20 compensation budget or refuse an offer.
+
+The [sandbox evidence page](https://makeroom-studio.abhinav-0905.chatgpt.site/proof) shows the completed account-backed PayPal run. Sign in through Connections for a separate sandbox workspace, or run locally with your own PayPal test accounts.
+
 ## Run locally
 
-Use Node 22.18+ or Node 24+. Install dependencies with `npm ci`. Create an ignored `.dev.vars` file:
+Use Node 22.18+ or Node 24+. Clone this repository and install dependencies with `npm ci`. Practice mode works without keys. To test the AI and PayPal integrations, create an ignored `.dev.vars` file:
 
 ```dotenv
 PAYPAL_CLIENT_ID=your-sandbox-client-id
@@ -24,11 +32,11 @@ Build once, create the local tables, then start development:
 
 ```sh
 npm run build
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0000_open_prima.sql
+npm run db:local
 npm run dev -- --port 5177
 ```
 
-Open http://127.0.0.1:5177 and select **Open my studio**. Local sign-in uses the starter's loopback-only test identity. Production uses Sites authentication and request headers supplied by its gateway. Do not expose the local development server to the internet.
+Open http://127.0.0.1:5177 for the guest practice studio. For PayPal, select **Connections → Sign in**. Local sign-in uses the starter's loopback-only test identity. Production uses Sites authentication and request headers supplied by its gateway. Do not expose the local development server to the internet.
 
 Start in practice mode. Connections can activate PayPal sandbox when credentials are present. The Customers screen funds the two original bookings. See [the demo walkthrough](docs/DEMO.md).
 
@@ -48,7 +56,7 @@ Payment operations use a D1 compare-and-swap lock, durable PayPal request IDs an
 
 Capture and refunds are separate operations. If the charge succeeds but a refund is pending or fails, the booking remains confirmed and the UI reports outstanding settlement. Sandbox financial records cannot be reset. No live payment endpoint is present.
 
-Customer offer links are bearer capabilities: anyone holding a link can answer that single offer. They do not reveal the other customers or the studio ledger. The current private deployment requires the owner to sign in at the site gateway, so external customer testing needs a separately approved sharing change.
+Customer offer links are bearer capabilities: anyone holding a link can answer that single offer. They do not reveal the other customers or the studio ledger. Guest practice records are isolated from signed-in studios and cannot invoke PayPal mutations. The hosted site is public; send offer links only to the intended recipient.
 
 ## Verification
 

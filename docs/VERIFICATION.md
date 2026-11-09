@@ -14,7 +14,7 @@ The local application completed its browser checkout journey using one existing 
 | Partial refund to Alex         | USD 15.00       | COMPLETED                           |
 | Partial refund to Sam          | USD 10.00       | COMPLETED                           |
 
-Readback time: 2026-11-08T20:44:59.521Z. The local ignored file `outputs/sandbox-verification.json` retains transaction IDs and amounts. No live money moved. This proves the sandbox sequence for this merchant configuration, not live merchant eligibility or production reliability.
+Readback time: 2026-11-08T20:44:59.521Z. [The published verification record](../public/evidence/sandbox-verification.json) retains the sandbox transaction IDs and amounts. No live money moved. This proves the sandbox sequence for this merchant configuration, not live merchant eligibility or production reliability.
 
 ## AI, account-backed
 
@@ -33,11 +33,11 @@ Run `node scripts/evaluate-ai.mts` to repeat using a configured Gemini key. Outp
 
 ## Local checks
 
-- 18 automated tests passed, including a sweep across valid time-grid scenarios.
+- 20 automated tests passed, including a sweep across valid time-grid scenarios and guest payment restrictions.
 - TypeScript check passed.
 - ESLint passed.
 - Practice journey completed in Chrome, including separate customer offers and simulated settlement.
-- Unauthenticated and forged-identity requests returned 401. A cross-origin mutation returned 403.
+- Before public guest access was added, unauthenticated and forged-identity requests returned 401. A cross-origin mutation returned 403. The public build permits isolated guest practice records and blocks guest PayPal operations.
 - PayPal credentials and Gemini key stay in ignored local environment data and hosted server secrets.
 
 ## Not established

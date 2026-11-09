@@ -1,10 +1,21 @@
 import { getChatGPTUser } from "@/app/chatgpt-auth";
 import { DomainError } from "./domain";
 import { PayPalError } from "./paypal";
-export async function ownerId() {
+import { guestId, guestCookie } from "./guest";
+export async function workspace(req: Request, create = false) {
   const user = await getChatGPTUser();
-  if (!user) throw new DomainError("Sign in to open your studio.", 401);
-  return user.userId;
+  if (user) return { owner: user.userId, guest: false, cookie: undefined };
+  const existing = guestId(req.headers.get("cookie"));
+  if (!existing && !create)
+    throw new DomainError("Open the studio first, then try again.", 401);
+  const id = existing || crypto.randomUUID();
+  return {
+    owner: "guest:" + id,
+    guest: true,
+    cookie: existing
+      ? undefined
+      : guestCookie(id, new URL(req.url).protocol === "https:"),
+  };
 }
 export function sameOrigin(req: Request) {
   const origin = req.headers.get("origin");
@@ -28,12 +39,13 @@ export async function body(req: Request) {
     throw new DomainError("Please send a valid JSON object.", 400);
   }
 }
-export const json = (value: unknown, status = 200) =>
+export const json = (value: unknown, status = 200, cookie?: string) =>
   Response.json(value, {
     status,
     headers: {
       "Cache-Control": "no-store",
       "X-Content-Type-Options": "nosniff",
+      ...(cookie ? { "Set-Cookie": cookie } : {}),
     },
   });
 export function failure(e: unknown) {

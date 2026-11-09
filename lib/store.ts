@@ -4,6 +4,26 @@ function db() {
   if (!env.DB) throw new Error("Studio storage is unavailable.");
   return env.DB;
 }
+export async function reserveAIRead(owner: string) {
+  const day = new Date().toISOString().slice(0, 10);
+  // Atomic increments enforce both limits even across concurrent requests.
+  for (const [key, limit] of [
+    [day + ":all", 200],
+    [day + ":" + owner, 20],
+  ] as const) {
+    const result = await db()
+      .prepare(
+        "INSERT INTO ai_usage (bucket,count) VALUES (?,1) ON CONFLICT(bucket) DO UPDATE SET count=count+1 WHERE count < ? RETURNING count",
+      )
+      .bind(key, limit)
+      .first<{ count: number }>();
+    if (!result)
+      throw new DomainError(
+        "The demo's AI allowance is used for today. You can still review terms manually and try the full practice flow.",
+        429,
+      );
+  }
+}
 export async function readStudio(owner: string): Promise<Studio> {
   const row = await db()
     .prepare("SELECT version,data FROM studios WHERE owner=?")

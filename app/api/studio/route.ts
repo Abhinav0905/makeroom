@@ -1,6 +1,12 @@
 import { z } from "zod";
-import { ownerId, sameOrigin, body, json, failure } from "@/lib/http";
-import { readStudio, updateStudio, saveOffers } from "@/lib/store";
+import { workspace, sameOrigin, body, json, failure } from "@/lib/http";
+import { guestActionAllowed } from "@/lib/guest";
+import {
+  readStudio,
+  updateStudio,
+  saveOffers,
+  reserveAIRead,
+} from "@/lib/store";
 import {
   DomainError,
   seed,
@@ -42,9 +48,9 @@ const preferenceSchema = z
       .max(16),
   })
   .strict();
-export async function GET() {
+export async function GET(req: Request) {
   try {
-    const owner = await ownerId();
+    const { owner, guest, cookie } = await workspace(req, true);
     let s = await readStudio(owner);
     if (
       s.plan?.status === "proposed" &&
@@ -52,7 +58,11 @@ export async function GET() {
       !s.operation
     )
       s = await updateStudio(owner, (s) => expire(s));
-    return json({ studio: s, integrations: integrationStatus() });
+    return json(
+      { studio: s, integrations: { ...integrationStatus(), guest } },
+      200,
+      cookie,
+    );
   } catch (e) {
     return failure(e);
   }
@@ -60,9 +70,14 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     sameOrigin(req);
-    const owner = await ownerId();
+    const { owner, guest } = await workspace(req);
     const b = await body(req);
     const action = z.string().max(40).parse(b.action);
+    if (guest && !guestActionAllowed(action, b.mode))
+      throw new DomainError(
+        "Guest studios use simulated payments. Sign in or run locally to test PayPal sandbox.",
+        403,
+      );
     const current = await readStudio(owner);
     if (b.version !== undefined && b.version !== current.version)
       throw new DomainError(
@@ -120,6 +135,7 @@ export async function POST(req: Request) {
       assertEditable(current);
       const booking = current.bookings.find((x) => x.id === bookingId);
       if (!booking) throw new DomainError("Booking not found.", 404);
+      await reserveAIRead(owner);
       const result = await interpret(message, booking);
       s = await update((s) => {
         if (s.version !== current.version)
@@ -226,7 +242,7 @@ export async function POST(req: Request) {
         });
       else s = await payments.cancelCheckout(owner);
     } else throw new DomainError("Unknown studio action.", 400);
-    return json({ studio: s, integrations: integrationStatus() });
+    return json({ studio: s, integrations: { ...integrationStatus(), guest } });
   } catch (e) {
     return failure(e);
   }

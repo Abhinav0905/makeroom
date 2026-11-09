@@ -1,0 +1,61 @@
+{
+  "verifiedAt": "2026-11-08T20:44:59.521Z",
+  "environment": "PayPal sandbox",
+  "newCapture": {
+    "id": "0RW62522V6579041A",
+    "status": "COMPLETED",
+    "amount": {
+      "currency_code": "USD",
+      "value": "145.00"
+    }
+  },
+  "originalCaptures": [
+    {
+      "id": "4CH15419F3477864R",
+      "status": "PARTIALLY_REFUNDED",
+      "amount": {
+        "currency_code": "USD",
+        "value": "60.00"
+      }
+    },
+    {
+      "id": "50W05713CV672214S",
+      "status": "PARTIALLY_REFUNDED",
+      "amount": {
+        "currency_code": "USD",
+        "value": "60.00"
+      }
+    }
+  ],
+  "refunds": [
+    {
+      "id": "17V66495EX001863A",
+      "status": "COMPLETED",
+      "amount": {
+        "currency_code": "USD",
+        "value": "15.00"
+      }
+    },
+    {
+      "id": "6XF75371XW100903J",
+      "status": "COMPLETED",
+      "amount": {
+        "currency_code": "USD",
+        "value": "10.00"
+      }
+    }
+  ],
+  "calendar": [
+    {
+      "customer": "alex",
+      "start": 780,
+      "refund": 1500
+    },
+    {
+      "customer": "sam",
+      "start": 960,
+      "refund": 1000
+    }
+  ],
+  "planStatus": "complete"
+}

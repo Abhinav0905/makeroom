@@ -2459,3 +2459,19 @@ code {
     scroll-behavior: auto !important;
   }
 }
+/* Public evidence page shares the studio's type and palette. */
+.proof-page { max-width: 1100px; margin: 0 auto; padding: 42px 36px 80px; }
+.proof-page .eyebrow { margin-top: 48px; }
+.proof-page h1 { font-family: Georgia, serif; font-size: clamp(42px, 6vw, 68px); font-weight: 400; line-height: 1.08; margin: 18px 0; }
+.proof-lead { max-width: 760px; font-size: 17px; line-height: 1.7; color: #52675f; }
+.proof-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin: 32px 0; }
+.proof-summary article { border: 1px solid #dbe2d8; background: #fff; border-radius: 14px; padding: 24px; display: flex; flex-direction: column; gap: 12px; }
+.proof-summary strong { font-family: Georgia, serif; font-size: 48px; color: #214d39; font-weight: 400; }
+.proof-summary small, .proof-summary span { color: #52675f; }
+.proof-record { border-top: 1px solid #dbe2d8; margin-top: 32px; padding-top: 24px; line-height: 1.7; }
+.proof-record h2 { font-family: Georgia, serif; font-size: 28px; font-weight: 400; }
+.proof-record table { width: 100%; text-align: left; border-collapse: collapse; margin: 20px 0; font-size: 14px; }
+.proof-record th, .proof-record td { padding: 14px 10px; border-bottom: 1px solid #dbe2d8; }
+.proof-record td svg, .proof-record a svg { display: inline; vertical-align: middle; }
+.proof-record a { color: #214d39; text-decoration: underline; }
+@media(max-width: 640px) { .proof-summary { grid-template-columns: 1fr; } .proof-page { padding: 24px 16px; } .proof-record { overflow-x: auto; } }
