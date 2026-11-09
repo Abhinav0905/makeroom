@@ -1,5 +1,9 @@
 export type Mode = "practice" | "sandbox";
 export type Alternative = { start: number; refund: number };
+export type RejectedAlternative = Alternative & {
+  evidence: string;
+  reason: string;
+};
 export type Booking = {
   id: string;
   name: string;
@@ -13,6 +17,8 @@ export type Booking = {
   preference: string;
   alternatives: Alternative[];
   preferenceSource: "reviewed" | "ai";
+  /** Customer quotes kept from the AI read, parallel to alternatives. */
+  quotes?: string[];
   captureId?: string;
   fundingOrderId?: string;
   fundingKey?: string;
@@ -25,6 +31,8 @@ export type Booking = {
     explanation: string;
     clarification: string | null;
     evidence: string[];
+    /** Times the customer offered that broke a studio rule. */
+    rejected?: RejectedAlternative[];
   };
 };
 export type BookingRequest = {

@@ -16,11 +16,15 @@ import {
   practiceSettle,
   event,
   expire,
+  time,
+  money,
+  type Alternative,
   type BookingRequest,
   type Studio,
 } from "@/lib/domain";
 import { integrationStatus } from "@/lib/config";
 import { interpret } from "@/lib/ai";
+import { toMinutes } from "@/lib/preference";
 import * as payments from "@/lib/payments-service";
 export const dynamic = "force-dynamic";
 const requestSchema = z
@@ -49,6 +53,14 @@ const preferenceSchema = z
       .max(16),
   })
   .strict();
+const sameTerms = (a: Alternative, b: Alternative) =>
+  a.start === b.start && a.refund === b.refund;
+const describeTerms = (alternatives: Alternative[]) =>
+  alternatives.length
+    ? alternatives
+        .map((a) => `${time(a.start)} for ${money(a.refund)} back`)
+        .join(", ")
+    : "no moves";
 async function get(req: Request) {
   try {
     const { owner, guest, cookie } = await workspace(req, true);
@@ -109,24 +121,32 @@ async function post(req: Request) {
             "The terms exceed this booking's time or refund limits.",
             400,
           );
+        const draft =
+          booking.aiDraft?.message === p.message ? booking.aiDraft : undefined;
         const fromAI =
-          booking.aiDraft?.message === p.message &&
+          !!draft &&
           p.alternatives.length > 0 &&
           p.alternatives.every((a) =>
-            booking.aiDraft!.alternatives.some(
-              (x) => x.start === a.start && x.refund === a.refund,
-            ),
+            draft.alternatives.some((x) => sameTerms(x, a)),
           );
         booking.preference = p.message;
         booking.alternatives = p.alternatives;
         booking.preferenceSource = fromAI ? "ai" : "reviewed";
+        // Quotes come only from the stored AI read, never from the client.
+        if (draft && fromAI)
+          booking.quotes = p.alternatives.map(
+            (a) =>
+              draft.evidence[
+                draft.alternatives.findIndex((x) => sameTerms(x, a))
+              ] ?? "",
+          );
+        else delete booking.quotes;
         delete booking.aiDraft;
         s.plan = null;
         event(
           s,
           "Flexibility terms reviewed",
-          booking.name +
-            "'s exact alternatives were saved. Any earlier offer is no longer valid.",
+          `${booking.name}'s exact alternatives were saved: ${describeTerms(p.alternatives)}. Any earlier offer is no longer valid.`,
           "consent",
         );
       });
@@ -145,24 +165,31 @@ async function post(req: Request) {
           );
         assertEditable(s);
         const target = s.bookings.find((x) => x.id === bookingId)!;
+        const { draft } = result;
         target.aiDraft = {
           message,
           model: result.model,
-          alternatives: result.draft.alternatives.map((a) => ({
-            start: Number(a.start.slice(0, 2)) * 60 + Number(a.start.slice(3)),
+          alternatives: draft.alternatives.map((a) => ({
+            start: toMinutes(a.start),
             refund: a.refundCents,
           })),
-          explanation: result.draft.explanation,
-          clarification: result.draft.clarification,
-          evidence: result.draft.alternatives.map((a) => a.evidence),
+          explanation: draft.explanation,
+          clarification: draft.clarification,
+          evidence: draft.alternatives.map((a) => a.evidence),
+          rejected: draft.rejected.map((a) => ({
+            start: toMinutes(a.start),
+            refund: a.refundCents,
+            evidence: a.evidence,
+            reason: a.reason,
+          })),
         };
+        const found = draft.clarification
+          ? "it needs a question answered first"
+          : `${describeTerms(target.aiDraft.alternatives)}${draft.rejected.length ? `; ${draft.rejected.length} more set aside by the studio's checks` : ""}`;
         event(
           s,
           "AI interpretation ready",
-          result.model +
-            " proposed terms for " +
-            booking.name +
-            ". Review is still required.",
+          `${result.model} read ${booking.name}'s message: ${found}. Review is still required.`,
           "notice",
         );
       });
