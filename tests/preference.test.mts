@@ -144,11 +144,11 @@ test("a messy message keeps every valid time and sets one aside", () => {
 });
 test("quote matching ignores curly quotes, spacing and case but not invented words", () => {
   assert.equal(
-    normalizeQuote("  Thursday’s  a BIT\n tight "),
+    normalizeQuote("  Thursday\u2019s  a BIT\n tight "),
     "thursday's a bit tight",
   );
-  assert.ok(quoteFound(messy, "thursday’s a bit   tight"));
-  assert.ok(quoteFound("I’d take ＄ 15", "I'd take $ 15"));
+  assert.ok(quoteFound(messy, "thursday\u2019s a bit   tight"));
+  assert.ok(quoteFound("I\u2019d take \uFF04 15", "I'd take $ 15"));
   for (const quote of ["I", " ", "1 ", "a b", "I can come at 2"])
     assert.equal(quoteFound(messy, quote), false, quote);
   assert.throws(

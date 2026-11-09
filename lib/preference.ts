@@ -56,8 +56,8 @@ export const toMinutes = (hhmm: string) =>
 export function normalizeQuote(text: string) {
   return text
     .normalize("NFKC")
-    .replace(/[‘’‚‛′`´]/g, "'")
-    .replace(/[“”„‟″«»]/g, '"')
+    .replace(/[\u2018\u2019\u201A\u201B\u2032`\u00B4]/g, "'")
+    .replace(/[\u201C\u201D\u201E\u201F\u2033\u00AB\u00BB]/g, '"')
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
