@@ -9,6 +9,7 @@ import {
   event,
   id,
   money,
+  type Booking,
   type Move,
   type Studio,
 } from "./domain.ts";
@@ -154,6 +155,43 @@ export function createPayments(deps: PaymentsDeps) {
     }
     return deps.readStudio(owner);
   }
+  // Capture a booking's prepayment order (finishFunding's path) and record it
+  // once PayPal reads it back as completed.
+  async function captureFunding(
+    b: Booking,
+    order: PayPalResource,
+    save: Save,
+    api: PayPal,
+  ) {
+    let r = order;
+    if (!r.purchase_units?.[0]?.payments?.captures?.length)
+      r = await api.captureOrder(b.fundingOrderId!, b.fundingCaptureKey!);
+    const cap = r.purchase_units?.[0]?.payments?.captures?.[0];
+    if (!cap)
+      throw new DomainError("PayPal has not returned a payment result yet.");
+    const verified = await api.getCapture(cap.id);
+    confirmedAmount(verified, b.prepaid);
+    if (verified.status !== "COMPLETED")
+      throw new DomainError(
+        "The original payment is " +
+          verified.status.toLowerCase() +
+          ". Check again before offering refunds.",
+      );
+    await save((s) => {
+      const current = s.bookings.find((x) => x.id === b.id)!;
+      current.captureId = verified.id;
+      delete current.fundingApprovalUrl;
+      event(
+        s,
+        "Original booking funded",
+        b.name +
+          "'s " +
+          money(b.prepaid) +
+          " sandbox payment was read back as completed.",
+        "payment",
+      );
+    });
+  }
   async function fundBooking(owner: string, bookingId: string, origin: string) {
     return transaction(
       owner,
@@ -182,6 +220,10 @@ export function createPayments(deps: PaymentsDeps) {
               origin + "/?paypal=cancel",
               "Prepaid " + b.service,
             );
+        // The customer already approved but the return redirect was lost:
+        // there is no approval link left, so finish the capture instead.
+        if (b.fundingOrderId && ["APPROVED", "COMPLETED"].includes(r.status))
+          return captureFunding(b, r, save, api);
         const url = approval(r);
         await save((s) => {
           const current = s.bookings.find((b) => b.id === bookingId)!;
@@ -219,36 +261,7 @@ export function createPayments(deps: PaymentsDeps) {
       async (s, save, api) => {
         const b = s.bookings.find((b) => b.id === bookingId)!;
         if (b.captureId) return;
-        let r = await api.getOrder(orderId);
-        if (!r.purchase_units?.[0]?.payments?.captures?.length)
-          r = await api.captureOrder(orderId, b.fundingCaptureKey!);
-        const cap = r.purchase_units?.[0]?.payments?.captures?.[0];
-        if (!cap)
-          throw new DomainError(
-            "PayPal has not returned a payment result yet.",
-          );
-        const verified = await api.getCapture(cap.id);
-        confirmedAmount(verified, b.prepaid);
-        if (verified.status !== "COMPLETED")
-          throw new DomainError(
-            "The original payment is " +
-              verified.status.toLowerCase() +
-              ". Check again before offering refunds.",
-          );
-        await save((s) => {
-          const current = s.bookings.find((b) => b.id === bookingId)!;
-          current.captureId = verified.id;
-          delete current.fundingApprovalUrl;
-          event(
-            s,
-            "Original booking funded",
-            b.name +
-              "'s " +
-              money(b.prepaid) +
-              " sandbox payment was read back as completed.",
-            "payment",
-          );
-        });
+        await captureFunding(b, await api.getOrder(orderId), save, api);
       },
     );
   }

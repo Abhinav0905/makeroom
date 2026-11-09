@@ -800,7 +800,7 @@ test("F6: a refund with the wrong amount is flagged and not retried", async () =
   done(fake);
 });
 
-// Locks and modes
+// Locks, modes and funding
 
 test("L1: a running step blocks payments; reconcile takes over a stale lock", async () => {
   const start = Date.parse("2026-11-12T18:00:00.000Z");
@@ -844,4 +844,65 @@ test("L2: practice studios never reach PayPal", async () => {
   ])
     await assert.rejects(step(), /Switch to PayPal sandbox/);
   assert.equal(fake.calls.length + fake.tokens, 0);
+});
+
+test("L3: funding with a lost redirect captures the approved order", async () => {
+  const { fake, payments } = setup((s) => {
+    delete s.bookings[0].captureId;
+    Object.assign(s.bookings[0], {
+      fundingOrderId: "FORD",
+      fundingKey: "fund-key",
+      fundingCaptureKey: "fund-capture-key",
+      fundingApprovalUrl:
+        "https://www.sandbox.paypal.com/checkoutnow?token=FORD",
+    });
+  });
+  const FCAP = { id: "FCAP", status: "COMPLETED", amount: USD("60.00") };
+  fake
+    .on("GET /v2/checkout/orders/FORD", ok({ id: "FORD", status: "APPROVED" }))
+    .on(
+      "POST /v2/checkout/orders/FORD/capture",
+      ok(
+        {
+          id: "FORD",
+          status: "COMPLETED",
+          purchase_units: [{ payments: { captures: [FCAP] } }],
+        },
+        201,
+      ),
+    )
+    .on("GET /v2/payments/captures/FCAP", ok(FCAP));
+  const s = await payments.fundBooking(OWNER, "alex", ORIGIN);
+  assert.equal(s.bookings[0].captureId, "FCAP");
+  assert.equal(s.bookings[0].fundingApprovalUrl, undefined);
+  assert.equal(
+    fake.to("POST /v2/checkout/orders/FORD/capture")[0].key,
+    "fund-capture-key",
+  );
+  assert.equal(s.plan!.status, "proposed");
+  done(fake);
+});
+
+test("L3: funding an order still awaiting approval returns its link as before", async () => {
+  const { fake, payments } = setup((s) => {
+    delete s.bookings[0].captureId;
+    Object.assign(s.bookings[0], {
+      fundingOrderId: "FORD",
+      fundingKey: "fund-key",
+      fundingCaptureKey: "fund-capture-key",
+    });
+  });
+  const link = "https://www.sandbox.paypal.com/checkoutnow?token=FORD";
+  fake.on(
+    "GET /v2/checkout/orders/FORD",
+    ok({
+      id: "FORD",
+      status: "PAYER_ACTION_REQUIRED",
+      links: [{ rel: "payer-action", href: link }],
+    }),
+  );
+  const s = await payments.fundBooking(OWNER, "alex", ORIGIN);
+  assert.equal(s.bookings[0].fundingApprovalUrl, link);
+  assert.equal(s.bookings[0].captureId, undefined);
+  done(fake);
 });
