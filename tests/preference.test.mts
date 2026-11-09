@@ -6,6 +6,7 @@ import {
   normalizeQuote,
   quoteFound,
   locateQuote,
+  ruleProblem,
 } from "../lib/preference.ts";
 import { readPreference } from "../lib/gemini.ts";
 const message = "I can move to 1 pm for $15 back.";
@@ -92,6 +93,33 @@ test("out of hours, off-grid and over-refund times are set aside with a reason",
   const limited = validateDraft(valid, message, 60, 1000);
   assert.equal(limited.alternatives.length, 0);
   assert.match(limited.rejected[0].reason, /more than the \$10 that can/);
+});
+test("late starts name midnight instead of wrapping to a pm end time", () => {
+  assert.equal(
+    ruleProblem(1410, 1500, 60, 6000),
+    "11:30 pm would end after midnight, after the 5 pm close",
+  );
+  assert.equal(
+    ruleProblem(1320, 1500, 120, 6000),
+    "10:00 pm would end at midnight, after the 5 pm close",
+  );
+  assert.equal(
+    ruleProblem(1380, 1500, 30, 6000),
+    "11:00 pm would end at 11:30 pm, after the 5 pm close",
+  );
+  const out = validateDraft(
+    {
+      ...valid,
+      alternatives: [{ ...valid.alternatives[0], start: "23:30" }],
+    },
+    message,
+    60,
+    6000,
+    840,
+  );
+  assert.equal(out.alternatives.length, 0);
+  assert.match(out.rejected[0].reason, /after midnight/);
+  assert.doesNotMatch(out.rejected[0].reason, /12:30 pm/);
 });
 test("schema errors still fail the whole draft with a specific reason", () => {
   assert.throws(

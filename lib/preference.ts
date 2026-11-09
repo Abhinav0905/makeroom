@@ -2,6 +2,7 @@ import { z } from "zod";
 import { money, time } from "./domain.ts";
 const OPEN = 780;
 const CLOSE = 1020;
+const DAY = 24 * 60;
 const REFUND_CAP = 6000;
 export const preferenceSchema = z
   .object({
@@ -130,8 +131,17 @@ export function ruleProblem(
   current?: number,
 ): string | null {
   if (start < OPEN) return `${time(start)} is before the 1 pm opening`;
-  if (start + duration > CLOSE)
-    return `${time(start)} would end at ${time(start + duration)}, after the 5 pm close`;
+  const end = start + duration;
+  if (end > CLOSE) {
+    // time() only covers one day, so name midnight instead of wrapping past it.
+    const at =
+      end < DAY
+        ? `at ${time(end)}`
+        : end === DAY
+          ? "at midnight"
+          : "after midnight";
+    return `${time(start)} would end ${at}, after the 5 pm close`;
+  }
   if (start % 15)
     return `${time(start)} is not on the studio's 15-minute schedule`;
   if (current !== undefined && start === current)
