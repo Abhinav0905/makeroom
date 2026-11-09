@@ -40,3 +40,19 @@ export function canCheckCancelledHold(p: Plan) {
     (!p.voidKey || !!p.error)
   );
 }
+/**
+ * The new customer's checkout link on an open plan. Shown only when the
+ * backend reports the checkout page (an older API has no such route) and the
+ * plan has a link: plans saved before the page existed do not.
+ */
+export function checkoutLinkVisible(
+  p: Plan,
+  backend: { checkoutPage?: boolean },
+) {
+  return (
+    backend.checkoutPage === true &&
+    !!p.checkoutToken &&
+    !p.committed &&
+    !["declined", "expired", "cancelled"].includes(p.status)
+  );
+}

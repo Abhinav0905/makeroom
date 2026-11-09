@@ -13,6 +13,7 @@ import {
   canCancelOffer,
   canCheckCancelledHold,
   canCheckExistingPayment,
+  checkoutLinkVisible,
   studioLocked,
 } from "../lib/plan-ui.ts";
 
@@ -215,5 +216,40 @@ test("a cancelled offer with an unconfirmed PayPal hold offers a payment check",
     ),
     false,
     "open offers use the plan's own buttons",
+  );
+});
+test("the new customer's checkout link shows only when the backend serves the page", () => {
+  const plan = (change: (p: Plan) => void = () => {}) => studio(change).plan!;
+  const supported = { checkoutPage: true };
+  assert.equal(checkoutLinkVisible(plan(), supported), true);
+  assert.equal(
+    checkoutLinkVisible(plan((p) => (p.status = "authorized")), supported),
+    true,
+    "the page shows the approved hold",
+  );
+  // The Pages frontend may talk to an older backend without the route.
+  assert.equal(checkoutLinkVisible(plan(), {}), false);
+  assert.equal(checkoutLinkVisible(plan(), { checkoutPage: false }), false);
+  assert.equal(
+    checkoutLinkVisible(plan((p) => delete p.checkoutToken), supported),
+    false,
+    "plans saved before the page existed have no link",
+  );
+  for (const status of ["declined", "expired", "cancelled"] as const)
+    assert.equal(
+      checkoutLinkVisible(plan((p) => (p.status = status)), supported),
+      false,
+      status,
+    );
+  assert.equal(
+    checkoutLinkVisible(
+      plan((p) => {
+        p.committed = true;
+        p.status = "complete";
+      }),
+      supported,
+    ),
+    false,
+    "a booked plan needs no link",
   );
 });

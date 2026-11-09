@@ -32,6 +32,7 @@ import {
   canCancelOffer,
   canCheckCancelledHold,
   canCheckExistingPayment,
+  checkoutLinkVisible,
   studioLocked,
 } from "@/lib/plan-ui";
 import StudioCalendar from "./studio-calendar";
@@ -44,6 +45,8 @@ type Integrations = {
   aiModel: string;
   webhooks: boolean;
   signIn?: boolean;
+  /** The backend serves the new customer's checkout page. */
+  checkoutPage?: boolean;
 };
 type View = "studio" | "customers" | "activity" | "settings";
 const defaults: Integrations = {
@@ -178,23 +181,28 @@ export default function StudioApp() {
     const url = s?.bookings.find((b) => b.id === bookingId)?.fundingApprovalUrl;
     if (url) location.assign(url);
   }
-  async function copyOffer(token: string) {
+  async function copyLink(path: string, copied: string) {
     try {
-      await navigator.clipboard.writeText(new URL(appHref("/offer/" + token), location.origin).href);
-      setNotice(
-        "Customer offer link copied. Send it only to the intended customer.",
-      );
+      await navigator.clipboard.writeText(new URL(appHref(path), location.origin).href);
+      setNotice(copied);
     } catch {
       setError(
-        "Clipboard access is unavailable. Open the offer and copy its address.",
+        "Clipboard access is unavailable. Open the link and copy its address.",
       );
     }
   }
+  const copyOffer = (token: string) =>
+    copyLink(
+      "/offer/" + token,
+      "Customer offer link copied. Send it only to the intended customer.",
+    );
   function exportRecord() {
     const copy = structuredClone(studio);
     copy.plan?.moves.forEach((m) => {
       m.token = "[private offer link omitted]";
     });
+    if (copy.plan?.checkoutToken)
+      copy.plan.checkoutToken = "[private checkout link omitted]";
     const blob = new Blob(
       [
         JSON.stringify(
@@ -703,6 +711,65 @@ export default function StudioApp() {
                             <strong>{money(p.totalCharge)}</strong>
                           </div>
                         </div>
+                        {checkoutLinkVisible(p, integrations) && (
+                          <div className="move-card checkout-link-card">
+                            <div className="move-name">
+                              <strong>
+                                {p.request.name.split(" ")[0]}&apos;s checkout
+                              </strong>
+                              <span
+                                className={
+                                  "consent-pill " +
+                                  (allAccepted ? "accepted" : "waiting")
+                                }
+                              >
+                                {allAccepted ? (
+                                  <Check size={11} />
+                                ) : (
+                                  <Clock3 size={11} />
+                                )}{" "}
+                                {p.status === "authorized"
+                                  ? "approved"
+                                  : p.status === "review"
+                                    ? "checking"
+                                    : allAccepted
+                                      ? "ready to pay"
+                                      : "after approvals"}
+                              </span>
+                            </div>
+                            <p className="checkout-link-note">
+                              {p.request.name.split(" ")[0]} sees the time,
+                              price and agreed refunds, then pays from this
+                              link. You can also finish below.
+                            </p>
+                            <div className="move-actions">
+                              <a
+                                href={appHref("/checkout/" + p.checkoutToken)}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                Open {p.request.name.split(" ")[0]}&apos;s
+                                checkout <ExternalLink size={12} />
+                              </a>
+                              <button
+                                className="icon-button"
+                                aria-label={
+                                  "Copy checkout link for " + p.request.name
+                                }
+                                onClick={() =>
+                                  copyLink(
+                                    "/checkout/" + p.checkoutToken,
+                                    "Checkout link copied. Send it only to " +
+                                      p.request.name.split(" ")[0] +
+                                      ".",
+                                  )
+                                }
+                              >
+                                <Link2 size={14} />
+                              </button>
+                            </div>
+                          </div>
+                        )}
                         {p.error && (
                           <div className="closed-offer">
                             <strong>Payment needs attention</strong>
