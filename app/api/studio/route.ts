@@ -25,6 +25,7 @@ import {
 import { integrationStatus } from "@/lib/config";
 import { interpret } from "@/lib/ai";
 import { toMinutes } from "@/lib/preference";
+import { MAX_TERMS, saveTerms } from "@/lib/terms";
 import * as payments from "@/lib/payments-service";
 export const dynamic = "force-dynamic";
 const requestSchema = z
@@ -50,11 +51,9 @@ const preferenceSchema = z
           })
           .strict(),
       )
-      .max(16),
+      .max(MAX_TERMS),
   })
   .strict();
-const sameTerms = (a: Alternative, b: Alternative) =>
-  a.start === b.start && a.refund === b.refund;
 const describeTerms = (alternatives: Alternative[]) =>
   alternatives.length
     ? alternatives
@@ -121,27 +120,9 @@ async function post(req: Request) {
             "The terms exceed this booking's time or refund limits.",
             400,
           );
-        const draft =
-          booking.aiDraft?.message === p.message ? booking.aiDraft : undefined;
-        const fromAI =
-          !!draft &&
-          p.alternatives.length > 0 &&
-          p.alternatives.every((a) =>
-            draft.alternatives.some((x) => sameTerms(x, a)),
-          );
-        booking.preference = p.message;
-        booking.alternatives = p.alternatives;
-        booking.preferenceSource = fromAI ? "ai" : "reviewed";
-        // Quotes come only from the stored AI read, never from the client.
-        if (draft && fromAI)
-          booking.quotes = p.alternatives.map(
-            (a) =>
-              draft.evidence[
-                draft.alternatives.findIndex((x) => sameTerms(x, a))
-              ] ?? "",
-          );
-        else delete booking.quotes;
-        delete booking.aiDraft;
+        // Quotes come only from the stored AI read or earlier AI-sourced
+        // terms for the same message, never from the client.
+        saveTerms(booking, p.message, p.alternatives);
         s.plan = null;
         event(
           s,

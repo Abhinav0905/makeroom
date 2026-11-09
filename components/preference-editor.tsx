@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { Check, Plus, Sparkles, SlidersHorizontal, X } from "lucide-react";
 import { time, money, type Booking, type Studio } from "@/lib/domain";
+import { MAX_TERMS, canAddTerm, noMoveNote } from "@/lib/terms";
 type Props = {
   booking: Booking;
   busy: boolean;
@@ -63,6 +64,7 @@ export default function PreferenceEditor({
     setRows((all) => all.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   }
   function addRow() {
+    if (!canAddTerm(rows.length)) return;
     const used = new Set(rows.map((r) => r.start));
     const start =
       starts.find((t) => t !== b.start && !used.has(t)) ?? starts[0];
@@ -165,7 +167,7 @@ export default function PreferenceEditor({
                   ))}
                 </ul>
               ) : (
-                <p>Keeps the original time. No move offered.</p>
+                <p>{noMoveNote(draft)}</p>
               )}
               {!!draft.rejected?.length && (
                 <>
@@ -249,10 +251,15 @@ export default function PreferenceEditor({
               type="button"
               className="text-button add-time"
               onClick={addRow}
-              disabled={locked}
+              disabled={locked || !canAddTerm(rows.length)}
             >
               <Plus size={12} /> Add another time
             </button>
+            {!canAddTerm(rows.length) && (
+              <p className="term-empty">
+                Up to {MAX_TERMS} times per customer.
+              </p>
+            )}
           </div>
           <button
             className="button primary small full"
