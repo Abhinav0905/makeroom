@@ -1,23 +1,41 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { PayPal, type PayPalResource } from "../lib/paypal.ts";
+import { PayPal, PayPalError, type PayPalResource } from "../lib/paypal.ts";
 import { createPayments } from "../lib/payments-core.ts";
-import { consent, propose, seed, type Studio } from "../lib/domain.ts";
+import {
+  assertEditable,
+  consent,
+  propose,
+  seed,
+  type Studio,
+} from "../lib/domain.ts";
 import { memoryStore } from "./support/memory-store.mts";
-import { USD, fakePayPal, ok } from "./support/fake-paypal.mts";
+import {
+  TIMEOUT,
+  USD,
+  err,
+  fakePayPal,
+  ok,
+  type Reply,
+} from "./support/fake-paypal.mts";
 
 const OWNER = "test-owner";
 const ORIGIN = "https://makeroom.test";
-const ORDERS = "/v2/checkout/orders";
+const APPROVAL = "https://www.sandbox.paypal.com/checkoutnow?token=ORD";
+// PayPal routes, as "METHOD path".
+const CREATE = "POST /v2/checkout/orders";
+const GET_ORDER = "GET /v2/checkout/orders/ORD";
+const AUTHORIZE = "POST /v2/checkout/orders/ORD/authorize";
+const CAPTURE = "POST /v2/payments/authorizations/AUTH/capture";
+const VOID = "POST /v2/payments/authorizations/AUTH/void";
+const GET_CAP = "GET /v2/payments/captures/CAPN";
+const REFUND_A = "POST /v2/payments/captures/CAP-A/refund";
+const REFUND_B = "POST /v2/payments/captures/CAP-B/refund";
+
 const ORDER_PAYER = {
   id: "ORD",
   status: "PAYER_ACTION_REQUIRED",
-  links: [
-    {
-      rel: "payer-action",
-      href: "https://www.sandbox.paypal.com/checkoutnow?token=ORD",
-    },
-  ],
+  links: [{ rel: "payer-action", href: APPROVAL }],
 };
 const ORDER_APPROVED = { id: "ORD", status: "APPROVED", purchase_units: [{}] };
 const ORDER_AUTH = (as: string, caps?: PayPalResource[]) => ({
@@ -32,8 +50,8 @@ const ORDER_AUTH = (as: string, caps?: PayPalResource[]) => ({
     },
   ],
 });
-const CAP = (status: string) => ({
-  id: "CAPN",
+const CAP = (status: string, id = "CAPN") => ({
+  id,
   status,
   amount: USD("145.00"),
 });
@@ -42,6 +60,7 @@ const REF = (id: string, status: string, value: string) => ({
   status,
   amount: USD(value),
 });
+const VOIDED = { id: "AUTH", status: "VOIDED", amount: USD("145.00") };
 
 type Body = {
   amount?: { value: string };
@@ -57,7 +76,22 @@ function fundedStudio(): Studio {
   for (const m of p.moves) consent(s, m.token, "accepted");
   return s;
 }
-function setup(shape: (s: Studio) => void = () => {}) {
+/** The buyer has a PayPal checkout for the plan. */
+function withOrder(s: Studio) {
+  s.plan!.orderId = "ORD";
+  s.plan!.approvalUrl = APPROVAL;
+}
+/** The buyer's payment is on hold as AUTH. */
+function authorized(s: Studio) {
+  withOrder(s);
+  s.plan!.status = "authorized";
+  s.plan!.authorizationId = "AUTH";
+  delete s.plan!.approvalUrl;
+}
+function setup(
+  shape: (s: Studio) => void = () => {},
+  now?: () => number,
+) {
   const store = memoryStore();
   const fake = fakePayPal();
   const s = fundedStudio();
@@ -67,35 +101,36 @@ function setup(shape: (s: Studio) => void = () => {}) {
     paypal: () => new PayPal({ clientId: "test", secret: "test" }, fake.send),
     readStudio: store.readStudio,
     updateStudio: store.updateStudio,
+    now,
   });
   return { store, fake, payments, studio: () => store.get(OWNER) };
 }
+type Fake = ReturnType<typeof fakePayPal>;
+/** Both agreed refunds succeed. */
+function refundsComplete(fake: Fake, a: Reply = ok(REF("RA", "COMPLETED", "15.00"), 201)) {
+  fake.on(REFUND_A, a).on(REFUND_B, ok(REF("RB", "COMPLETED", "10.00"), 201));
+}
+/** Every queued reply was used and nothing else was requested. */
+function done(fake: Fake) {
+  assert.deepEqual(fake.unexpected, []);
+  assert.deepEqual(fake.pending(), []);
+}
+const starts = (s: Studio) => s.bookings.map((b) => b.start);
+const refunded = (s: Studio) => s.bookings.map((b) => b.refunded);
+const uncertain = (e: unknown) => e instanceof PayPalError && e.uncertain;
 
 test("H1: the happy path keeps the recorded PayPal call sequence and keys", async () => {
   const { fake, payments, studio } = setup();
   fake
-    .on("POST " + ORDERS, ok(ORDER_PAYER, 201))
-    .on("GET " + ORDERS + "/ORD", ok(ORDER_APPROVED))
-    .on("POST " + ORDERS + "/ORD/authorize", ok(ORDER_AUTH("CREATED"), 201))
-    .on(
-      "POST /v2/payments/authorizations/AUTH/capture",
-      ok(CAP("COMPLETED"), 201),
-    )
-    .on("GET /v2/payments/captures/CAPN", ok(CAP("COMPLETED")))
-    .on(
-      "POST /v2/payments/captures/CAP-A/refund",
-      ok(REF("RA", "COMPLETED", "15.00"), 201),
-    )
-    .on(
-      "POST /v2/payments/captures/CAP-B/refund",
-      ok(REF("RB", "COMPLETED", "10.00"), 201),
-    );
+    .on(CREATE, ok(ORDER_PAYER, 201))
+    .on(GET_ORDER, ok(ORDER_APPROVED))
+    .on(AUTHORIZE, ok(ORDER_AUTH("CREATED"), 201))
+    .on(CAPTURE, ok(CAP("COMPLETED"), 201))
+    .on(GET_CAP, ok(CAP("COMPLETED")));
+  refundsComplete(fake);
   let s = await payments.beginCheckout(OWNER, ORIGIN);
   assert.equal(s.plan?.orderId, "ORD");
-  assert.equal(
-    s.plan?.approvalUrl,
-    "https://www.sandbox.paypal.com/checkoutnow?token=ORD",
-  );
+  assert.equal(s.plan?.approvalUrl, APPROVAL);
   s = await payments.finishApproval(OWNER, "ORD");
   assert.equal(s.plan?.status, "authorized");
   assert.equal(s.plan?.authorizationId, "AUTH");
@@ -142,6 +177,482 @@ test("H1: the happy path keeps the recorded PayPal call sequence and keys", asyn
     ],
   );
   assert.equal(studio().operation, undefined, "the payment lock is released");
-  assert.deepEqual(fake.unexpected, []);
-  assert.deepEqual(fake.pending(), []);
+  done(fake);
+});
+
+// Ways out of review
+
+for (const [label, failure] of [
+  ["times out", TIMEOUT],
+  ["gets a 503", err(503, "SERVICE_UNAVAILABLE")],
+] as const)
+  test(`R1: capture ${label}, the authorization survives, capture retries with the same key`, async () => {
+    const { fake, payments, studio } = setup(authorized);
+    const captureKey = studio().plan!.captureKey;
+    fake.on(CAPTURE, failure);
+    await assert.rejects(payments.captureAndSettle(OWNER), uncertain);
+    assert.equal(studio().plan!.status, "review");
+    assert.deepEqual(starts(studio()), [840, 900]);
+    assert.equal(studio().operation, undefined);
+
+    fake.on(GET_ORDER, ok(ORDER_AUTH("CREATED")));
+    let s = await payments.reconcile(OWNER);
+    assert.equal(s.plan!.status, "authorized");
+    assert.equal(s.plan!.authorizationId, "AUTH");
+    assert.equal(s.plan!.error, undefined);
+    assert.equal(s.plan!.captureKey, captureKey, "no rotation after a timeout");
+
+    fake.on(CAPTURE, ok(CAP("COMPLETED"), 201)).on(GET_CAP, ok(CAP("COMPLETED")));
+    refundsComplete(fake);
+    s = await payments.captureAndSettle(OWNER);
+    assert.equal(s.plan!.status, "complete");
+    assert.deepEqual(
+      fake.to(CAPTURE).map((c) => c.key),
+      [captureKey, captureKey],
+    );
+    done(fake);
+  });
+
+test("R2: capture times out but PayPal captured; reconcile confirms and refunds once", async () => {
+  const { fake, payments, studio } = setup(authorized);
+  fake.on(CAPTURE, TIMEOUT);
+  await assert.rejects(payments.captureAndSettle(OWNER), uncertain);
+  assert.equal(studio().plan!.status, "review");
+
+  fake.on(GET_ORDER, ok(ORDER_AUTH("CAPTURED", [CAP("COMPLETED")])));
+  refundsComplete(fake);
+  const s = await payments.reconcile(OWNER);
+  assert.equal(s.plan!.status, "complete");
+  assert.equal(s.plan!.captureId, "CAPN");
+  assert.deepEqual(starts(s), [780, 960]);
+  assert.deepEqual(refunded(s), [1500, 1000]);
+  assert.equal(fake.to(CAPTURE).length, 1, "no second capture");
+  done(fake);
+});
+
+test("R3: cancel after recovering the authorization voids with its own key", async () => {
+  const { fake, payments, studio } = setup(authorized);
+  fake.on(CAPTURE, err(503, "SERVICE_UNAVAILABLE"));
+  await assert.rejects(payments.captureAndSettle(OWNER));
+  fake.on(GET_ORDER, ok(ORDER_AUTH("CREATED")));
+  await payments.reconcile(OWNER);
+  assert.equal(studio().plan!.status, "authorized");
+
+  fake.on(VOID, ok(VOIDED));
+  const s = await payments.cancelCheckout(OWNER);
+  const p = s.plan!;
+  assert.equal(p.status, "cancelled");
+  const [voidCall] = fake.to(VOID);
+  assert.ok(p.voidKey);
+  assert.equal(voidCall.key, p.voidKey);
+  assert.notEqual(p.voidKey, p.authorizeKey);
+  assert.notEqual(p.voidKey, p.captureKey);
+  assert.doesNotThrow(() => assertEditable(s));
+  assert.deepEqual(starts(s), [840, 900]);
+  assert.deepEqual(refunded(s), [0, 0]);
+  done(fake);
+});
+
+test("R4: cancel straight from review once PayPal shows the hold is uncaptured", async () => {
+  const { fake, payments, studio } = setup(authorized);
+  fake.on(CAPTURE, err(503, "SERVICE_UNAVAILABLE"));
+  await assert.rejects(payments.captureAndSettle(OWNER));
+  assert.equal(studio().plan!.status, "review");
+
+  fake.on(GET_ORDER, ok(ORDER_AUTH("CREATED"))).on(VOID, ok(VOIDED));
+  const s = await payments.cancelCheckout(OWNER);
+  assert.equal(s.plan!.status, "cancelled");
+  assert.deepEqual(fake.routes().slice(1), [GET_ORDER, VOID]);
+  assert.equal(fake.to(VOID)[0].key, s.plan!.voidKey);
+  assert.deepEqual(starts(s), [840, 900]);
+  done(fake);
+});
+
+test("R4: cancel from review is refused when PayPal shows a completed capture", async () => {
+  const { fake, payments, studio } = setup(authorized);
+  fake.on(CAPTURE, TIMEOUT);
+  await assert.rejects(payments.captureAndSettle(OWNER));
+
+  fake.on(GET_ORDER, ok(ORDER_AUTH("CAPTURED", [CAP("COMPLETED")])));
+  refundsComplete(fake);
+  await assert.rejects(
+    payments.cancelCheckout(OWNER),
+    /PayPal shows a payment for this booking; it was not cancelled/,
+  );
+  assert.equal(fake.to(VOID).length, 0);
+  const s = studio();
+  assert.equal(s.plan!.committed, true, "the captured payment is honoured");
+  assert.equal(s.plan!.status, "complete");
+  assert.deepEqual(refunded(s), [1500, 1000]);
+  done(fake);
+});
+
+test("R5: authorize fails on the PayPal return; reconcile authorizes with the same key", async () => {
+  const { fake, payments, studio } = setup(withOrder);
+  fake
+    .on(GET_ORDER, ok(ORDER_APPROVED))
+    .on(AUTHORIZE, err(503, "SERVICE_UNAVAILABLE"));
+  await assert.rejects(payments.finishApproval(OWNER, "ORD"), uncertain);
+  assert.equal(studio().plan!.status, "review");
+
+  fake
+    .on(GET_ORDER, ok(ORDER_APPROVED))
+    .on(AUTHORIZE, ok(ORDER_AUTH("CREATED"), 201));
+  const s = await payments.reconcile(OWNER);
+  assert.equal(s.plan!.status, "authorized");
+  assert.equal(s.plan!.authorizationId, "AUTH");
+  assert.equal(s.plan!.approvalUrl, undefined);
+  assert.deepEqual(
+    fake.to(AUTHORIZE).map((c) => c.key),
+    [s.plan!.authorizeKey, s.plan!.authorizeKey],
+  );
+  done(fake);
+});
+
+test("R5: reconcile does not authorize again when PayPal already holds the payment", async () => {
+  const { fake, payments } = setup(withOrder);
+  fake.on(GET_ORDER, ok(ORDER_APPROVED)).on(AUTHORIZE, TIMEOUT);
+  await assert.rejects(payments.finishApproval(OWNER, "ORD"), uncertain);
+
+  fake.on(GET_ORDER, ok(ORDER_AUTH("CREATED")));
+  const s = await payments.reconcile(OWNER);
+  assert.equal(s.plan!.status, "authorized");
+  assert.equal(fake.to(AUTHORIZE).length, 1);
+  done(fake);
+});
+
+test("R6: a lost approval redirect is finished by reconcile", async () => {
+  const { fake, payments } = setup(withOrder);
+  fake
+    .on(GET_ORDER, ok(ORDER_APPROVED))
+    .on(AUTHORIZE, ok(ORDER_AUTH("CREATED"), 201));
+  const s = await payments.reconcile(OWNER);
+  assert.equal(s.plan!.status, "authorized");
+  assert.equal(fake.to(AUTHORIZE)[0].key, s.plan!.authorizeKey);
+  done(fake);
+});
+
+test("R6: an expired approved offer is closed without authorizing", async () => {
+  const { fake, payments } = setup((s) => {
+    withOrder(s);
+    s.plan!.expiresAt = new Date(Date.now() - 60_000).toISOString();
+  });
+  fake.on(GET_ORDER, ok(ORDER_APPROVED));
+  const s = await payments.reconcile(OWNER);
+  assert.equal(s.plan!.status, "cancelled");
+  assert.equal(s.plan!.approvalUrl, undefined);
+  assert.equal(fake.to(AUTHORIZE).length, 0);
+  assert.doesNotThrow(() => assertEditable(s));
+  done(fake);
+});
+
+test("R6: an order the buyer has not approved keeps the offer open", async () => {
+  const { fake, payments } = setup((s) => {
+    withOrder(s);
+    s.plan!.status = "review";
+  });
+  fake.on(GET_ORDER, ok(ORDER_PAYER));
+  const s = await payments.reconcile(OWNER);
+  assert.equal(s.plan!.status, "proposed");
+  assert.equal(s.plan!.approvalUrl, APPROVAL);
+  done(fake);
+});
+
+test("R7: an order creation timeout keeps the offer open and the retry reuses the key", async () => {
+  const { fake, payments, studio } = setup();
+  fake.on(CREATE, TIMEOUT);
+  await assert.rejects(payments.beginCheckout(OWNER, ORIGIN), uncertain);
+  let p = studio().plan!;
+  assert.equal(p.status, "proposed");
+  assert.equal(p.orderId, undefined);
+  assert.match(p.error ?? "", /did not arrive/);
+
+  fake.on(CREATE, ok(ORDER_PAYER, 201));
+  p = (await payments.beginCheckout(OWNER, ORIGIN)).plan!;
+  assert.equal(p.orderId, "ORD");
+  assert.equal(p.approvalUrl, APPROVAL);
+  assert.equal(p.error, undefined);
+  assert.deepEqual(
+    fake.to(CREATE).map((c) => c.key),
+    [p.orderKey, p.orderKey],
+  );
+  done(fake);
+});
+
+test("R7: a stored review with no order is reopened without calling PayPal", async () => {
+  const { fake, payments } = setup((s) => {
+    s.plan!.status = "review";
+    s.plan!.error = "PayPal's response did not arrive.";
+  });
+  const s = await payments.reconcile(OWNER);
+  assert.equal(s.plan!.status, "proposed");
+  assert.equal(s.plan!.error, undefined);
+  assert.equal(s.operation, undefined);
+  assert.equal(fake.calls.length + fake.tokens, 0);
+});
+
+test("R8: a declined capture is reported, then recovered with a new capture key", async () => {
+  const { fake, payments, studio } = setup(authorized);
+  const firstKey = studio().plan!.captureKey;
+  fake.on(CAPTURE, ok(CAP("DECLINED"), 201)).on(GET_CAP, ok(CAP("DECLINED")));
+  await assert.rejects(payments.captureAndSettle(OWNER), /declined/);
+  let s = studio();
+  assert.equal(s.plan!.status, "review");
+  assert.match(s.plan!.error ?? "", /declined/);
+  assert.deepEqual(starts(s), [840, 900]);
+  assert.ok(!fake.routes().some((r) => r.endsWith("/refund")));
+
+  fake
+    .on(GET_CAP, ok(CAP("DECLINED")))
+    .on(GET_ORDER, ok(ORDER_AUTH("CREATED", [CAP("DECLINED")])));
+  s = await payments.reconcile(OWNER);
+  const p = s.plan!;
+  assert.equal(p.status, "authorized");
+  assert.equal(p.captureId, undefined);
+  assert.equal(p.captureStatus, undefined);
+  assert.deepEqual(p.failedCaptureIds, ["CAPN"]);
+  assert.notEqual(p.captureKey, firstKey);
+
+  // A second check does not rotate again for the same declined capture.
+  fake.on(GET_ORDER, ok(ORDER_AUTH("CREATED", [CAP("DECLINED")])));
+  s = await payments.reconcile(OWNER);
+  assert.equal(s.plan!.captureKey, p.captureKey);
+  assert.deepEqual(s.plan!.failedCaptureIds, ["CAPN"]);
+
+  fake
+    .on(CAPTURE, ok(CAP("COMPLETED", "CAPN2"), 201))
+    .on("GET /v2/payments/captures/CAPN2", ok(CAP("COMPLETED", "CAPN2")));
+  refundsComplete(fake);
+  s = await payments.captureAndSettle(OWNER);
+  assert.equal(s.plan!.status, "complete");
+  assert.deepEqual(
+    fake.to(CAPTURE).map((c) => c.key),
+    [firstKey, p.captureKey],
+  );
+  done(fake);
+});
+
+for (const as of ["VOIDED", "DENIED"])
+  test(`R8: a declined capture with a ${as.toLowerCase()} authorization closes the offer`, async () => {
+    const { fake, payments } = setup(authorized);
+    fake.on(CAPTURE, ok(CAP("DECLINED"), 201)).on(GET_CAP, ok(CAP("DECLINED")));
+    await assert.rejects(payments.captureAndSettle(OWNER), /declined/);
+
+    fake
+      .on(GET_CAP, ok(CAP("DECLINED")))
+      .on(GET_ORDER, ok(ORDER_AUTH(as, [CAP("DECLINED")])));
+    const s = await payments.reconcile(OWNER);
+    assert.equal(s.plan!.status, "cancelled");
+    assert.equal(s.plan!.captureId, undefined);
+    assert.doesNotThrow(() => assertEditable(s));
+    assert.deepEqual(starts(s), [840, 900]);
+    done(fake);
+  });
+
+test("R9: a pending capture never reports success and cannot be cancelled", async () => {
+  const { fake, payments, studio } = setup(authorized);
+  fake.on(CAPTURE, ok(CAP("PENDING"), 201)).on(GET_CAP, ok(CAP("PENDING")));
+  await assert.rejects(payments.captureAndSettle(OWNER), /still reviewing/);
+  let s = studio();
+  assert.equal(s.plan!.status, "review");
+  assert.equal(s.plan!.captureStatus, "PENDING");
+  assert.ok(s.events.some((e) => e.title === "Payment pending"));
+
+  await assert.rejects(
+    payments.cancelCheckout(OWNER),
+    /PayPal has taken this payment/,
+  );
+
+  fake.on(GET_CAP, ok(CAP("PENDING")));
+  s = await payments.reconcile(OWNER);
+  assert.equal(s.plan!.status, "review");
+  assert.ok(!s.plan!.committed);
+  assert.deepEqual(starts(s), [840, 900]);
+
+  fake.on(GET_CAP, ok(CAP("COMPLETED")));
+  refundsComplete(fake);
+  s = await payments.reconcile(OWNER);
+  assert.equal(s.plan!.status, "complete");
+  assert.deepEqual(refunded(s), [1500, 1000]);
+  assert.equal(fake.to(VOID).length, 0);
+  done(fake);
+});
+
+test("R10: a funding capture failure leaves the plan untouched", async () => {
+  const { fake, payments, studio } = setup((s) => {
+    delete s.bookings[0].captureId;
+    s.bookings[0].fundingOrderId = "FORD";
+    s.bookings[0].fundingKey = "fund-key";
+    s.bookings[0].fundingCaptureKey = "fund-capture-key";
+  });
+  fake
+    .on("GET /v2/checkout/orders/FORD", ok({ id: "FORD", status: "APPROVED" }))
+    .on(
+      "POST /v2/checkout/orders/FORD/capture",
+      err(502, "BAD_GATEWAY"),
+    );
+  await assert.rejects(
+    payments.finishFunding(OWNER, "alex", "FORD"),
+    uncertain,
+  );
+  const s = studio();
+  assert.equal(s.plan!.status, "proposed");
+  assert.equal(s.plan!.error, undefined);
+  assert.equal(
+    fake.to("POST /v2/checkout/orders/FORD/capture")[0].key,
+    "fund-capture-key",
+  );
+  assert.ok(s.events.some((e) => e.title === "Payment needs attention"));
+  done(fake);
+});
+
+// Voids
+
+test("V1: the void key is saved before the call and differs from the other keys", async () => {
+  const fresh = fundedStudio().plan!;
+  assert.ok(fresh.voidKey);
+  assert.equal(
+    new Set([fresh.orderKey, fresh.authorizeKey, fresh.captureKey, fresh.voidKey])
+      .size,
+    4,
+  );
+  // A plan stored before void keys existed gets one before PayPal is called.
+  const { fake, payments, studio } = setup((s) => {
+    authorized(s);
+    delete s.plan!.voidKey;
+  });
+  fake.on(VOID, TIMEOUT);
+  await assert.rejects(payments.cancelCheckout(OWNER), uncertain);
+  const p = studio().plan!;
+  assert.equal(p.status, "review");
+  assert.ok(p.voidKey);
+  assert.equal(fake.to(VOID)[0].key, p.voidKey);
+  assert.notEqual(p.voidKey, p.authorizeKey);
+  done(fake);
+});
+
+test("V2: a void PayPal does not confirm leaves the hold authorized", async () => {
+  const { fake, payments, studio } = setup(authorized);
+  fake.on(VOID, ok({ id: "AUTH", status: "CREATED" }));
+  await assert.rejects(
+    payments.cancelCheckout(OWNER),
+    /PayPal did not confirm the void/,
+  );
+  assert.equal(studio().plan!.status, "authorized");
+  done(fake);
+});
+
+test("V3: an empty void response is checked against the order", async () => {
+  const { fake, payments } = setup(authorized);
+  fake.on(VOID, { status: 204 }).on(GET_ORDER, ok(ORDER_AUTH("VOIDED")));
+  const s = await payments.cancelCheckout(OWNER);
+  assert.equal(s.plan!.status, "cancelled");
+  done(fake);
+});
+
+test("V3: an empty void response with the hold still active is not a cancel", async () => {
+  const { fake, payments, studio } = setup(authorized);
+  fake.on(VOID, { status: 204 }).on(GET_ORDER, ok(ORDER_AUTH("CREATED")));
+  await assert.rejects(
+    payments.cancelCheckout(OWNER),
+    /PayPal did not confirm the void/,
+  );
+  assert.equal(studio().plan!.status, "authorized");
+  done(fake);
+});
+
+test("V4: a void 500 goes to review; reconcile finds it voided", async () => {
+  const { fake, payments, studio } = setup(authorized);
+  fake.on(VOID, err(500, "INTERNAL_SERVER_ERROR"));
+  await assert.rejects(payments.cancelCheckout(OWNER), uncertain);
+  assert.equal(studio().plan!.status, "review");
+
+  fake.on(GET_ORDER, ok(ORDER_AUTH("VOIDED")));
+  const s = await payments.reconcile(OWNER);
+  assert.equal(s.plan!.status, "cancelled");
+  assert.doesNotThrow(() => assertEditable(s));
+  done(fake);
+});
+
+test("V4: a void 500 with the hold still active can be cancelled again with the same key", async () => {
+  const { fake, payments, studio } = setup(authorized);
+  fake.on(VOID, err(500, "INTERNAL_SERVER_ERROR"));
+  await assert.rejects(payments.cancelCheckout(OWNER), uncertain);
+  const voidKey = studio().plan!.voidKey;
+
+  fake.on(GET_ORDER, ok(ORDER_AUTH("CREATED")));
+  let s = await payments.reconcile(OWNER);
+  assert.equal(s.plan!.status, "authorized");
+
+  fake.on(VOID, ok(VOIDED));
+  s = await payments.cancelCheckout(OWNER);
+  assert.equal(s.plan!.status, "cancelled");
+  assert.deepEqual(
+    fake.to(VOID).map((c) => c.key),
+    [voidKey, voidKey],
+  );
+  done(fake);
+});
+
+test("V5: a void refused as previously captured goes to review and reconcile completes it", async () => {
+  const { fake, payments, studio } = setup(authorized);
+  fake.on(VOID, err(422, "PREVIOUSLY_CAPTURED"));
+  await assert.rejects(
+    payments.cancelCheckout(OWNER),
+    /PayPal shows this payment was captured/,
+  );
+  assert.equal(studio().plan!.status, "review");
+
+  fake.on(GET_ORDER, ok(ORDER_AUTH("CAPTURED", [CAP("COMPLETED")])));
+  refundsComplete(fake);
+  const s = await payments.reconcile(OWNER);
+  assert.equal(s.plan!.status, "complete");
+  assert.deepEqual(starts(s), [780, 960]);
+  done(fake);
+});
+
+// Locks and modes
+
+test("L1: a running step blocks payments; reconcile takes over a stale lock", async () => {
+  const start = Date.parse("2026-11-12T18:00:00.000Z");
+  let clock = start + 30_000;
+  const { fake, payments, studio } = setup((s) => {
+    authorized(s);
+    s.plan!.expiresAt = new Date(start + 30 * 60_000).toISOString();
+    s.operation = {
+      id: "other-step",
+      kind: "capture-and-refund",
+      startedAt: new Date(start).toISOString(),
+    };
+  }, () => clock);
+  await assert.rejects(payments.captureAndSettle(OWNER), /already running/);
+  await assert.rejects(payments.reconcile(OWNER), /already running/);
+  assert.equal(fake.calls.length, 0);
+  assert.equal(studio().operation?.id, "other-step");
+
+  clock = start + 121_000;
+  await assert.rejects(payments.captureAndSettle(OWNER), /already running/);
+  fake.on(GET_ORDER, ok(ORDER_AUTH("CREATED")));
+  const s = await payments.reconcile(OWNER);
+  assert.equal(s.plan!.status, "authorized");
+  assert.equal(s.operation, undefined);
+  done(fake);
+});
+
+test("L2: practice studios never reach PayPal", async () => {
+  const { fake, payments } = setup((s) => {
+    authorized(s);
+    s.mode = "practice";
+  });
+  for (const step of [
+    () => payments.fundBooking(OWNER, "alex", ORIGIN),
+    () => payments.finishFunding(OWNER, "alex", "FORD"),
+    () => payments.beginCheckout(OWNER, ORIGIN),
+    () => payments.finishApproval(OWNER, "ORD"),
+    () => payments.captureAndSettle(OWNER),
+    () => payments.reconcile(OWNER),
+    () => payments.cancelCheckout(OWNER),
+  ])
+    await assert.rejects(step(), /Switch to PayPal sandbox/);
+  assert.equal(fake.calls.length + fake.tokens, 0);
 });

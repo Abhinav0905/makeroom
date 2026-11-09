@@ -2,17 +2,20 @@ export class PayPalError extends Error {
   status: number;
   debugId?: string;
   uncertain: boolean;
+  issue?: string;
   constructor(
     message: string,
     status: number,
     debugId?: string,
     uncertain = false,
+    issue?: string,
   ) {
     super(message);
     this.name = "PayPalError";
     this.status = status;
     this.debugId = debugId;
     this.uncertain = uncertain;
+    this.issue = issue;
   }
 }
 export type PayPalConfig = { clientId: string; secret: string };
@@ -93,6 +96,7 @@ export class PayPal {
         res.status,
         debug,
         method !== "GET" && res.status >= 500,
+        detail.details?.[0]?.issue,
       );
     }
     return (res.status === 204 ? {} : await res.json()) as T;

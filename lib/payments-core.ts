@@ -18,6 +18,24 @@ export type PaymentsDeps = {
   now?(): number;
 };
 type Save = (fn: (s: Studio) => void) => Promise<Studio>;
+// What PayPal shows for the current plan after syncFromPayPal has applied it.
+type Synced =
+  | { kind: "captured" }
+  | { kind: "pending" }
+  | { kind: "held"; authorizationId: string }
+  | { kind: "auth-pending" }
+  | { kind: "awaiting-buyer" }
+  | { kind: "released" };
+// Only these steps can leave money in an unknown state at PayPal for the plan.
+// Funding steps concern an original booking and never change the plan.
+const PLAN_REVIEW_KINDS = [
+  "authorize",
+  "capture-and-refund",
+  "cancel-checkout",
+  "reconcile",
+];
+const FUNDING_KINDS = ["fund-booking", "capture-prepayment"];
+const FAILED_CAPTURE = ["DECLINED", "FAILED"];
 function approval(r: PayPalResource) {
   const url = r.links?.find((l) =>
     ["payer-action", "approve"].includes(l.rel),
@@ -37,6 +55,17 @@ function confirmedAmount(r: PayPalResource, amount: number) {
     throw new DomainError(
       "The PayPal amount didn't match this booking. Manual review is required.",
     );
+}
+function captureProblem(status: string) {
+  if (status === "PENDING")
+    return "PayPal is still reviewing this payment. No appointment has moved. Use Check payment in a few minutes.";
+  if (FAILED_CAPTURE.includes(status))
+    return "PayPal declined this payment. No appointment has moved. Use Check payment to retry or cancel.";
+  return (
+    "PayPal reports this payment as " +
+    status.toLowerCase() +
+    ". No appointment has moved. Use Check payment."
+  );
 }
 export function createPayments(deps: PaymentsDeps) {
   const now = () => (deps.now ? deps.now() : Date.now());
@@ -80,11 +109,20 @@ export function createPayments(deps: PaymentsDeps) {
       await run(s, save, api);
     } catch (e) {
       await save((s) => {
-        if (s.plan) {
-          s.plan.error =
+        const p = s.plan;
+        if (p && !FUNDING_KINDS.includes(kind)) {
+          p.error =
             e instanceof Error ? e.message : "Payment step needs review.";
-          if (e instanceof PayPalError && e.uncertain && !s.plan.committed)
-            s.plan.status = "review";
+          // Review means "PayPal may hold or have moved money for this plan".
+          // Without an order there is nothing at PayPal to hold money.
+          if (
+            e instanceof PayPalError &&
+            e.uncertain &&
+            PLAN_REVIEW_KINDS.includes(kind) &&
+            p.orderId &&
+            !p.committed
+          )
+            p.status = "review";
         }
         event(
           s,
@@ -208,6 +246,8 @@ export function createPayments(deps: PaymentsDeps) {
       },
       async (s, save, api) => {
         const p = s.plan!;
+        // A retry after a lost response reuses orderKey, so PayPal returns
+        // the order it already created instead of a second one.
         const order = p.orderId
           ? await api.getOrder(p.orderId)
           : await api.createOrder(
@@ -222,6 +262,7 @@ export function createPayments(deps: PaymentsDeps) {
         await save((s) => {
           s.plan!.orderId = order.id;
           s.plan!.approvalUrl = url;
+          delete s.plan!.error;
           event(
             s,
             "Customer checkout ready",
@@ -244,6 +285,17 @@ export function createPayments(deps: PaymentsDeps) {
             "This checkout does not belong to the current offer.",
             400,
           );
+        if (p.status === "review")
+          throw new DomainError(
+            "This payment needs a check first. Use Check payment.",
+          );
+        if (
+          p.status === "expired" ||
+          (p.status === "proposed" && Date.parse(p.expiresAt) < now())
+        )
+          throw new DomainError(
+            "This offer expired before payment was authorized; cancel it.",
+          );
         if (p.status !== "authorized") assertReady(s);
       },
       async (s, save, api) => {
@@ -252,24 +304,34 @@ export function createPayments(deps: PaymentsDeps) {
         let order = await api.getOrder(orderId);
         if (!order.purchase_units?.[0]?.payments?.authorizations?.length)
           order = await api.authorize(orderId, p.authorizeKey);
-        const a = order.purchase_units?.[0]?.payments?.authorizations?.[0];
-        if (!a || a.status !== "CREATED")
-          throw new DomainError("The buyer's payment is not authorized yet.");
-        confirmedAmount(a, p.totalCharge);
-        await save((s) => {
-          s.plan!.authorizationId = a.id;
-          s.plan!.status = "authorized";
-          delete s.plan!.approvalUrl;
-          event(
-            s,
-            "Payment authorized",
-            money(p.totalCharge) +
-              " is on hold. Review the arrangement before confirming the booking.",
-            "payment",
-          );
-        });
+        await recordAuthorization(order, p.totalCharge, save);
       },
     );
+  }
+  // finishApproval's checks on an authorize result, shared with reconcile.
+  async function recordAuthorization(
+    order: PayPalResource,
+    total: number,
+    save: Save,
+  ) {
+    const a = order.purchase_units?.[0]?.payments?.authorizations?.[0];
+    if (!a || a.status !== "CREATED")
+      throw new DomainError("The buyer's payment is not authorized yet.");
+    confirmedAmount(a, total);
+    await save((s) => {
+      s.plan!.authorizationId = a.id;
+      s.plan!.status = "authorized";
+      delete s.plan!.approvalUrl;
+      delete s.plan!.error;
+      event(
+        s,
+        "Payment authorized",
+        money(total) +
+          " is on hold. Review the arrangement before confirming the booking.",
+        "payment",
+      );
+    });
+    return a.id;
   }
   async function refundMoves(snapshot: Studio, save: Save, api: PayPal) {
     for (const move of snapshot.plan!.moves) {
@@ -330,6 +392,271 @@ export function createPayments(deps: PaymentsDeps) {
       delete s.plan!.error;
     });
   }
+  // A COMPLETED capture: confirm the booking and pay the agreed refunds.
+  async function settle(
+    capture: PayPalResource,
+    authorizationId: string | undefined,
+    save: Save,
+    api: PayPal,
+    total: number,
+  ) {
+    confirmedAmount(capture, total);
+    const updated = await save((s) => {
+      s.plan!.captureId = capture.id;
+      s.plan!.captureStatus = capture.status;
+      if (authorizationId) s.plan!.authorizationId ??= authorizationId;
+      commit(s);
+    });
+    await refundMoves(updated, save, api);
+  }
+  // Read the plan's payment from PayPal and move the plan to the state PayPal
+  // proves. Used by reconcile, and by cancel from review (cancelling = true),
+  // which must never create an authorization and leaves the final save to the
+  // cancel itself.
+  async function syncFromPayPal(
+    s: Studio,
+    save: Save,
+    api: PayPal,
+    cancelling: boolean,
+  ): Promise<Synced> {
+    const p = s.plan!;
+    const toReview = async (message: string): Promise<never> => {
+      await save((s) => {
+        if (!s.plan!.committed) s.plan!.status = "review";
+      });
+      throw new DomainError(message);
+    };
+    if (p.committed) {
+      // The booking was confirmed against a completed capture; only refunds
+      // can remain.
+      const capture = await api.getCapture(p.captureId!);
+      if (capture.status !== "COMPLETED")
+        await toReview(
+          "PayPal now reports this payment as " +
+            capture.status.toLowerCase() +
+            ". Check it in PayPal before more refunds are made.",
+        );
+      await settle(capture, undefined, save, api, p.totalCharge);
+      return { kind: "captured" };
+    }
+    const seen: PayPalResource[] = [];
+    if (p.captureId) seen.push(await api.getCapture(p.captureId));
+    let order: PayPalResource | undefined;
+    if (!seen.some((c) => ["COMPLETED", "PENDING"].includes(c.status))) {
+      try {
+        order = await api.getOrder(p.orderId!);
+      } catch (e) {
+        // An order PayPal no longer has cannot hold money, unless this studio
+        // already recorded an authorization or capture for it.
+        if (
+          !(e instanceof PayPalError) ||
+          e.status !== 404 ||
+          p.authorizationId ||
+          p.captureId
+        )
+          throw e;
+      }
+      seen.push(...(order?.purchase_units?.[0]?.payments?.captures ?? []));
+    }
+    const auth = order?.purchase_units?.[0]?.payments?.authorizations?.[0];
+    const capture =
+      seen.find((c) => c.status === "COMPLETED") ??
+      seen.find((c) => c.status === "PENDING") ??
+      seen.find((c) => !FAILED_CAPTURE.includes(c.status));
+    // (a) PayPal took the payment.
+    if (capture?.status === "COMPLETED") {
+      await settle(capture, auth?.id, save, api, p.totalCharge);
+      return { kind: "captured" };
+    }
+    // (b) PayPal is still reviewing the payment.
+    if (capture?.status === "PENDING") {
+      confirmedAmount(capture, p.totalCharge);
+      await save((s) => {
+        s.plan!.captureId = capture.id;
+        s.plan!.captureStatus = capture.status;
+        s.plan!.status = "review";
+        s.plan!.error = captureProblem("PENDING");
+        event(
+          s,
+          "Payment pending",
+          "PayPal is still reviewing this payment; nothing has moved.",
+          "payment",
+        );
+      });
+      return { kind: "pending" };
+    }
+    if (capture)
+      await toReview(
+        "PayPal reports this payment as " +
+          capture.status.toLowerCase() +
+          ". Manual review is required.",
+      );
+    // (c) The authorization was captured but the capture is not readable.
+    if (auth && ["CAPTURED", "PARTIALLY_CAPTURED"].includes(auth.status))
+      await toReview(
+        "PayPal shows this authorization as captured, but the capture could not be read. Check it in PayPal.",
+      );
+    // (d) Only declined or failed captures, or none at all.
+    const failed = seen.filter(
+      (c) =>
+        FAILED_CAPTURE.includes(c.status) &&
+        !p.failedCaptureIds?.includes(c.id),
+    );
+    if (failed.length || p.captureId)
+      await save((s) => {
+        const q = s.plan!;
+        for (const c of failed)
+          if (!q.failedCaptureIds?.includes(c.id))
+            (q.failedCaptureIds ??= []).push(c.id);
+        // The old key would replay the declined capture. Only a definite
+        // failure rotates it, never a timeout.
+        if (failed.length) q.captureKey = id();
+        delete q.captureId;
+        delete q.captureStatus;
+        if (failed.length)
+          event(
+            s,
+            "Payment declined",
+            "PayPal declined the capture. No appointment has moved.",
+            "payment",
+          );
+      });
+    const release = async (why: string): Promise<Synced> => {
+      if (!cancelling)
+        await save((s) => {
+          s.plan!.status = "cancelled";
+          delete s.plan!.approvalUrl;
+          delete s.plan!.error;
+          event(
+            s,
+            "No payment is held",
+            why + " The original appointments are unchanged.",
+            "payment",
+          );
+        });
+      return { kind: "released" };
+    };
+    if (auth?.status === "CREATED") {
+      confirmedAmount(auth, p.totalCharge);
+      await save((s) => {
+        const q = s.plan!;
+        q.authorizationId = auth.id;
+        // A cancelled plan stays cancelled; reconcile then voids the hold.
+        if (q.status === "cancelled") return;
+        q.status = "authorized";
+        delete q.approvalUrl;
+        delete q.error;
+        event(
+          s,
+          "PayPal checked",
+          money(q.totalCharge) +
+            " is on hold. No appointment has moved yet.",
+          "payment",
+        );
+      });
+      return { kind: "held", authorizationId: auth.id };
+    }
+    if (auth?.status === "PENDING") {
+      await save((s) =>
+        event(
+          s,
+          "Authorization pending",
+          "PayPal is still reviewing the buyer's authorization. Nothing has moved.",
+          "notice",
+        ),
+      );
+      return { kind: "auth-pending" };
+    }
+    if (auth && ["VOIDED", "DENIED", "EXPIRED"].includes(auth.status))
+      return release(
+        "PayPal reports the authorization as " +
+          auth.status.toLowerCase() +
+          ".",
+      );
+    if (auth)
+      await toReview(
+        "PayPal reports the authorization as " +
+          auth.status.toLowerCase() +
+          ". Manual review is required.",
+      );
+    // No authorization yet.
+    const open =
+      ["proposed", "review"].includes(p.status) &&
+      p.moves.every((m) => m.consent === "accepted") &&
+      Date.parse(p.expiresAt) > now() &&
+      s.bookings.every(
+        (b) => !p.moves.some((m) => m.bookingId === b.id) || !!b.captureId,
+      );
+    if (!cancelling && open && order?.status === "APPROVED") {
+      // The buyer approved but the authorize result was lost (redirect or
+      // timeout). The same authorizeKey makes this the same request.
+      const authorizationId = await recordAuthorization(
+        await api.authorize(p.orderId!, p.authorizeKey),
+        p.totalCharge,
+        save,
+      );
+      return { kind: "held", authorizationId };
+    }
+    if (
+      !cancelling &&
+      open &&
+      ["CREATED", "SAVED", "PAYER_ACTION_REQUIRED"].includes(
+        order?.status ?? "",
+      )
+    ) {
+      await save((s) => {
+        s.plan!.status = "proposed";
+        delete s.plan!.error;
+        event(
+          s,
+          "PayPal checked",
+          "The buyer has not approved the payment yet. Nothing is held.",
+          "notice",
+        );
+      });
+      return { kind: "awaiting-buyer" };
+    }
+    return release(
+      order
+        ? "PayPal shows no authorization for this offer."
+        : "PayPal has no record of this checkout.",
+    );
+  }
+  // Void an authorization with the plan's own void key and accept only a
+  // confirmed VOIDED result.
+  async function voidHold(
+    s: Studio,
+    authorizationId: string,
+    save: Save,
+    api: PayPal,
+  ) {
+    const p = s.plan!;
+    let r: PayPalResource;
+    try {
+      r = await api.void(authorizationId, p.voidKey!);
+    } catch (e) {
+      if (e instanceof PayPalError && e.issue === "PREVIOUSLY_CAPTURED") {
+        await save((s) => {
+          s.plan!.status = "review";
+        });
+        throw new DomainError(
+          "PayPal shows this payment was captured; use Check payment.",
+        );
+      }
+      throw e;
+    }
+    let status = r.status;
+    if (!status && p.orderId) {
+      // An empty 204 body: read the authorization back from the order.
+      const auths =
+        (await api.getOrder(p.orderId)).purchase_units?.[0]?.payments
+          ?.authorizations ?? [];
+      status = (auths.find((a) => a.id === authorizationId) ?? auths[0])
+        ?.status;
+    }
+    if (status !== "VOIDED")
+      throw new DomainError("PayPal did not confirm the void.");
+  }
   async function captureAndSettle(owner: string) {
     return transaction(
       owner,
@@ -354,63 +681,77 @@ export function createPayments(deps: PaymentsDeps) {
           s.plan!.captureStatus = result.status;
         });
         const verified = await api.getCapture(result.id);
-        confirmedAmount(verified, p.totalCharge);
+        try {
+          confirmedAmount(verified, p.totalCharge);
+        } catch (e) {
+          await save((s) => {
+            s.plan!.captureStatus = verified.status;
+            s.plan!.status = "review";
+          });
+          throw e;
+        }
+        const completed = verified.status === "COMPLETED";
         const updated = await save((s) => {
           s.plan!.captureStatus = verified.status;
-          if (verified.status === "COMPLETED") {
+          if (completed) {
             commit(s);
           } else {
             s.plan!.status = "review";
+            event(
+              s,
+              "Payment " + verified.status.toLowerCase(),
+              "PayPal reported the capture as " +
+                verified.status.toLowerCase() +
+                ". No appointment has moved.",
+              "payment",
+            );
           }
         });
-        if (verified.status === "COMPLETED")
-          await refundMoves(updated, save, api);
+        if (!completed) throw new DomainError(captureProblem(verified.status));
+        await refundMoves(updated, save, api);
       },
     );
   }
   async function reconcile(owner: string) {
+    let restored = false;
     return transaction(
       owner,
       "reconcile",
       (s) => {
-        if (!s.plan?.orderId)
+        const p = s.plan;
+        // Older records could enter review when order creation timed out.
+        // With no order there is nothing at PayPal to check or hold money.
+        if (p && !p.orderId && p.status === "review") {
+          p.status = "proposed";
+          delete p.error;
+          event(
+            s,
+            "Payment check complete",
+            "No PayPal checkout was recorded for this offer, so nothing is held. You can request payment again.",
+            "notice",
+          );
+          restored = true;
+          return;
+        }
+        if (!p?.orderId)
           throw new DomainError("There is no PayPal request to check.");
+        p.voidKey ??= id();
       },
       async (s, save, api) => {
-        const p = s.plan!;
-        let capture: PayPalResource | undefined;
-        if (p.captureId) capture = await api.getCapture(p.captureId);
-        else {
-          const order = await api.getOrder(p.orderId!);
-          capture = order.purchase_units?.[0]?.payments?.captures?.[0];
-          const auth =
-            order.purchase_units?.[0]?.payments?.authorizations?.[0];
-          if (!capture && auth && auth.status === "CREATED") {
-            await save((s) => {
-              s.plan!.authorizationId = auth.id;
-              if (s.plan!.status !== "review") s.plan!.status = "authorized";
-            });
-          }
-        }
-        if (capture) {
-          confirmedAmount(capture, p.totalCharge);
-          const updated = await save((s) => {
-            s.plan!.captureId = capture!.id;
-            s.plan!.captureStatus = capture!.status;
-            if (capture!.status === "COMPLETED") commit(s);
-          });
-          if (capture.status === "COMPLETED")
-            await refundMoves(updated, save, api);
-        } else if (p.committed) await refundMoves(s, save, api);
-        else
+        if (restored) return;
+        const r = await syncFromPayPal(s, save, api, false);
+        if (r.kind === "held" && s.plan!.status === "cancelled") {
+          // A cancelled offer whose hold PayPal still shows: finish the void.
+          await voidHold(s, r.authorizationId, save, api);
           await save((s) =>
             event(
               s,
-              "PayPal checked",
-              "No completed capture was found. The original appointments remain unchanged.",
-              "notice",
+              "Authorization voided",
+              "PayPal confirmed the hold for this cancelled offer was released.",
+              "payment",
             ),
           );
+        }
       },
       true,
     );
@@ -421,18 +762,44 @@ export function createPayments(deps: PaymentsDeps) {
       "cancel-checkout",
       (s) => {
         const p = s.plan;
-        if (!p || p.committed || p.captureId || p.status === "review")
+        if (!p)
           throw new DomainError(
             "This payment needs reconciliation before it can be cancelled.",
           );
+        if (
+          p.committed ||
+          ["COMPLETED", "PENDING"].includes(p.captureStatus ?? "")
+        )
+          throw new DomainError(
+            "PayPal has taken this payment. Use Check payment.",
+          );
+        if (!["proposed", "expired", "authorized", "review"].includes(p.status))
+          throw new DomainError("This offer is already closed.");
+        // Saved before any PayPal call, so a retried void repeats the same
+        // request instead of making a new one.
+        p.voidKey ??= id();
       },
       async (s, save, api) => {
         const p = s.plan!;
-        if (p.authorizationId)
-          await api.void(p.authorizationId, p.authorizeKey);
+        let hold = p.authorizationId;
+        if (p.status === "review" && p.orderId) {
+          // Cancel from review only after PayPal proves nothing was captured.
+          const r = await syncFromPayPal(s, save, api, true);
+          if (r.kind === "captured" || r.kind === "pending")
+            throw new DomainError(
+              "PayPal shows a payment for this booking; it was not cancelled.",
+            );
+          if (r.kind === "auth-pending")
+            throw new DomainError(
+              "PayPal is still reviewing this authorization; it was not cancelled. Use Check payment in a few minutes.",
+            );
+          hold = r.kind === "held" ? r.authorizationId : undefined;
+        }
+        if (hold) await voidHold(s, hold, save, api);
         await save((s) => {
           s.plan!.status = "cancelled";
           delete s.plan!.approvalUrl;
+          delete s.plan!.error;
           event(
             s,
             "Offer cancelled",

@@ -70,11 +70,13 @@ export type Plan = {
   orderKey: string;
   authorizeKey: string;
   captureKey: string;
+  voidKey?: string;
   orderId?: string;
   approvalUrl?: string;
   authorizationId?: string;
   captureId?: string;
   captureStatus?: string;
+  failedCaptureIds?: string[];
   committed?: boolean;
   error?: string;
   paymentAttemptAt?: string;
@@ -348,6 +350,7 @@ export function propose(
     orderKey: id(),
     authorizeKey: id(),
     captureKey: id(),
+    voidKey: id(),
   };
   s.request = { ...request };
   s.plan = p;
