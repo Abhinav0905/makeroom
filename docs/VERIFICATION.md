@@ -31,6 +31,20 @@ Eight synthetic messages were sent to `gemini-2.5-flash` through the same extrac
 
 Run `node scripts/evaluate-ai.mts` to repeat using a configured Gemini key. Outputs are in ignored `outputs/ai-evaluation.json`. This small set is a smoke evaluation, not a measured accuracy claim. Human review and final customer consent remain required.
 
+## AI step after the messy-message update (Gemini rerun pending)
+
+Checked November 9, 2026, without any Gemini or PayPal calls. Since the record above, the AI step changed:
+
+- Alex's practice message is messy: 1 pm for $15, 4 pm for $20 and 4:30 pm for $20. The reviewed seed terms are 1 pm / $15 and 4 pm / $20. The planner still moves Alex to 1 pm for $15 and Sam to 4 pm for $10.
+- The prompt includes the booking's current start. Each alternative in the reply is checked on its own: a time outside opening hours, off the 15-minute grid, at the current start or above the refund limit is set aside with a plain reason, and the other times stay available. Format errors, a missing quotation, or a clarification together with times still reject the whole reply with a specific message.
+- The owner sees and can save every alternative, not only the first. The model's free-text explanation is no longer shown as the result.
+- Quotations are matched ignoring case, spacing, curly quotes and Unicode compatibility forms. The stored and displayed quotation is the customer's exact text.
+- Saved AI-sourced terms keep their quotations, including when the same terms are saved again.
+
+The eight-message result above was measured before these changes. `scripts/evaluate-ai.mts` now has ten cases, including the messy message and a counter-offer. A rerun against Gemini with the new prompt is pending, so no pass rate is claimed for it yet.
+
+On this version, 39 automated tests pass, including quotation matching, set-aside reasons, provider failure messages and keeping quotations on save. The TypeScript check and ESLint pass.
+
 ## Local checks
 
 - 85 automated tests pass, including a sweep across valid time-grid scenarios, guest payment restrictions and 57 payment-state tests. The payment-state tests run each payment step against a scripted PayPal sandbox inside the test process, with no network calls: the recorded happy-path call sequence and request IDs, recovery from timeouts, declines, pending results and lost redirects, voids and cancels, and each customer's refund on its own. Five more tests check which payment buttons the studio shows.

@@ -1,7 +1,8 @@
 "use client";
 import { useState } from "react";
-import { Check, Sparkles, SlidersHorizontal, X } from "lucide-react";
+import { Check, Plus, Sparkles, SlidersHorizontal, X } from "lucide-react";
 import { time, money, type Booking, type Studio } from "@/lib/domain";
+import { MAX_TERMS, canAddTerm, noMoveNote } from "@/lib/terms";
 type Props = {
   booking: Booking;
   busy: boolean;
@@ -12,6 +13,25 @@ type Props = {
     data?: Record<string, unknown>,
   ) => Promise<Studio | null>;
 };
+/** One editable alternative. Refund is in dollars while editing. */
+type Row = { start: number; refund: number; on: boolean; quote?: string };
+type Draft = NonNullable<Booking["aiDraft"]>;
+const savedRows = (b: Booking): Row[] =>
+  b.alternatives.map((a, i) => ({
+    start: a.start,
+    refund: a.refund / 100,
+    on: true,
+    quote: b.quotes?.[i] || undefined,
+  }));
+const draftRows = (d: Draft): Row[] =>
+  d.alternatives.map((a, i) => ({
+    start: a.start,
+    refund: a.refund / 100,
+    on: true,
+    quote: d.evidence[i] || undefined,
+  }));
+const move = (from: number, to: number, refund: number) =>
+  `${time(from)} → ${time(to)} · ${money(refund)} back`;
 export default function PreferenceEditor({
   booking: b,
   busy,
@@ -21,36 +41,46 @@ export default function PreferenceEditor({
 }: Props) {
   const [open, setOpen] = useState(false);
   const [message, setMessage] = useState(b.preference);
-  const [start, setStart] = useState(b.alternatives[0]?.start ?? 780);
-  const [refund, setRefund] = useState((b.alternatives[0]?.refund ?? 0) / 100);
-  const [flexible, setFlexible] = useState(!!b.alternatives.length);
+  const [rows, setRows] = useState<Row[]>(() => savedRows(b));
+  const starts = Array.from(
+    { length: Math.max(1, (1020 - b.duration - 780) / 15 + 1) },
+    (_, i) => 780 + i * 15,
+  );
+  const draft = b.aiDraft?.message === message ? b.aiDraft : undefined;
   function toggle() {
     if (!open) {
       setMessage(b.preference);
-      setStart(b.alternatives[0]?.start ?? 780);
-      setRefund((b.alternatives[0]?.refund ?? 0) / 100);
-      setFlexible(!!b.alternatives.length);
+      setRows(savedRows(b));
     }
     setOpen(!open);
   }
   async function analyze() {
     const s = await act("interpret", { bookingId: b.id, message });
     const d = s?.bookings.find((x) => x.id === b.id)?.aiDraft;
-    if (d?.alternatives.length) {
-      setStart(d.alternatives[0].start);
-      setRefund(d.alternatives[0].refund / 100);
-      setFlexible(true);
-    } else if (d && !d.clarification) setFlexible(false);
+    if (d?.alternatives.length) setRows(draftRows(d));
+    else if (d && !d.clarification) setRows([]);
+  }
+  function change(i: number, patch: Partial<Row>) {
+    setRows((all) => all.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  }
+  function addRow() {
+    if (!canAddTerm(rows.length)) return;
+    const used = new Set(rows.map((r) => r.start));
+    const start =
+      starts.find((t) => t !== b.start && !used.has(t)) ?? starts[0];
+    setRows([...rows, { start, refund: 0, on: true }]);
   }
   async function save() {
+    const alternatives = rows
+      .filter((r) => r.on)
+      .map((r) => ({ start: r.start, refund: Math.round(r.refund * 100) }))
+      .filter(
+        (a, i, all) =>
+          all.findIndex((x) => x.start === a.start && x.refund === a.refund) ===
+          i,
+      );
     const s = await act("preference", {
-      preference: {
-        bookingId: b.id,
-        message,
-        alternatives: flexible
-          ? [{ start, refund: Math.round(refund * 100) }]
-          : [],
-      },
+      preference: { bookingId: b.id, message, alternatives },
     });
     if (s) setOpen(false);
   }
@@ -84,12 +114,17 @@ export default function PreferenceEditor({
                 ? "AI terms reviewed"
                 : "Reviewed terms"}
             </span>
-            <strong>
-              {b.alternatives.length
-                ? money(Math.min(...b.alternatives.map((a) => a.refund))) +
-                  " back"
-                : "No moves"}
-            </strong>
+            {b.alternatives.length ? (
+              <ul className="preference-terms">
+                {b.alternatives.map((a, i) => (
+                  <li key={i}>
+                    → {time(a.start)} · {money(a.refund)} back
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <strong>No moves</strong>
+            )}
           </div>
         </>
       ) : (
@@ -112,59 +147,120 @@ export default function PreferenceEditor({
             <Sparkles size={14} />
             {ai ? "Read with AI" : "AI connection needed"}
           </button>
-          {b.aiDraft?.message === message && (
+          {draft && (
             <div className="ai-draft">
               <span className="eyebrow">AI PROPOSAL · REVIEW REQUIRED</span>
-              <p>{b.aiDraft.explanation}</p>
-              {b.aiDraft.clarification && (
-                <strong>{b.aiDraft.clarification}</strong>
+              {draft.clarification ? (
+                <p className="ai-ask">
+                  <strong>Ask the customer first:</strong>{" "}
+                  {draft.clarification}
+                </p>
+              ) : draft.alternatives.length ? (
+                <ul className="ai-moves">
+                  {draft.alternatives.map((a, i) => (
+                    <li key={i}>
+                      <strong>{move(b.start, a.start, a.refund)}</strong>
+                      {draft.evidence[i] && (
+                        <blockquote>&quot;{draft.evidence[i]}&quot;</blockquote>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p>{noMoveNote(draft)}</p>
               )}
-              {b.aiDraft.evidence.slice(0, 1).map((e, i) => (
-                <blockquote key={i}>&quot;{e}&quot;</blockquote>
-              ))}
+              {!!draft.rejected?.length && (
+                <>
+                  <span className="ai-subhead">
+                    Set aside by the studio&apos;s checks
+                  </span>
+                  <ul className="ai-moves rejected">
+                    {draft.rejected.map((r, i) => (
+                      <li key={i}>
+                        <s>{move(b.start, r.start, r.refund)}</s>
+                        <span className="ai-reason">{r.reason}</span>
+                        {r.evidence && (
+                          <blockquote>&quot;{r.evidence}&quot;</blockquote>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
             </div>
           )}
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              checked={flexible}
-              onChange={(e) => setFlexible(e.target.checked)}
-              disabled={locked}
-            />
-            Customer is open to this alternative
-          </label>
-          {flexible && (
-            <div className="form-two">
-              <label>
-                New start
-                <select
-                  value={start}
-                  onChange={(e) => setStart(+e.target.value)}
+          <div
+            className="term-list"
+            role="group"
+            aria-label="Times the customer is open to"
+          >
+            <span className="term-title">Customer is open to these times</span>
+            {rows.length > 0 && (
+              <div className="term-row term-head" aria-hidden="true">
+                <span />
+                <span>New start</span>
+                <span>Refund ($)</span>
+              </div>
+            )}
+            {rows.map((r, i) => (
+              <div className={"term-row" + (r.on ? "" : " off")} key={i}>
+                <input
+                  type="checkbox"
+                  checked={r.on}
+                  onChange={(e) => change(i, { on: e.target.checked })}
                   disabled={locked}
+                  aria-label={`Offer ${time(r.start)} for ${money(Math.round(r.refund * 100))} back`}
+                />
+                <select
+                  value={r.start}
+                  onChange={(e) =>
+                    change(i, { start: +e.target.value, quote: undefined })
+                  }
+                  disabled={locked}
+                  aria-label="New start"
                 >
-                  {Array.from({ length: 13 }, (_, i) => 780 + i * 15).map(
-                    (t) => (
-                      <option value={t} key={t}>
-                        {time(t)}
-                      </option>
-                    ),
-                  )}
+                  {starts.map((t) => (
+                    <option value={t} key={t}>
+                      {time(t)}
+                    </option>
+                  ))}
                 </select>
-              </label>
-              <label>
-                Refund ($)
                 <input
                   type="number"
                   min={0}
                   max={(b.prepaid - b.refunded) / 100}
                   step={1}
-                  value={refund}
-                  onChange={(e) => setRefund(+e.target.value)}
+                  value={r.refund}
+                  onChange={(e) =>
+                    change(i, { refund: +e.target.value, quote: undefined })
+                  }
                   disabled={locked}
+                  aria-label="Refund in dollars"
                 />
-              </label>
-            </div>
-          )}
+                {r.quote && !draft && message === b.preference && (
+                  <blockquote>&quot;{r.quote}&quot;</blockquote>
+                )}
+              </div>
+            ))}
+            {!rows.length && (
+              <p className="term-empty">
+                No other times. The original booking stays.
+              </p>
+            )}
+            <button
+              type="button"
+              className="text-button add-time"
+              onClick={addRow}
+              disabled={locked || !canAddTerm(rows.length)}
+            >
+              <Plus size={12} /> Add another time
+            </button>
+            {!canAddTerm(rows.length) && (
+              <p className="term-empty">
+                Up to {MAX_TERMS} times per customer.
+              </p>
+            )}
+          </div>
           <button
             className="button primary small full"
             onClick={save}

@@ -819,9 +819,17 @@ code {
   gap: 4px;
   color: #8b967c;
 }
-.preference-bottom strong {
+.preference-bottom strong,
+.preference-terms {
   font-size: 10px;
   font-weight: 750;
+}
+.preference-terms {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  text-align: right;
+  line-height: 1.5;
 }
 .preference-form {
   padding-top: 13px;
@@ -861,6 +869,96 @@ code {
   font-style: italic;
   color: #79846b;
   font-size: 10px;
+}
+.ai-moves {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 9px;
+}
+.ai-moves strong {
+  font-size: 12px;
+  font-weight: 750;
+  color: var(--ink);
+}
+.ai-draft .ai-moves blockquote {
+  margin: 2px 0 0;
+}
+.ai-subhead {
+  display: block;
+  margin-top: 13px;
+  padding-top: 10px;
+  border-top: 1px solid #e4ead7;
+  font-size: 9px;
+  font-weight: 750;
+  color: #8b947c;
+}
+.ai-moves.rejected s {
+  font-weight: 650;
+  color: #9a948a;
+}
+.ai-reason {
+  display: block;
+  font-size: 10px;
+  font-weight: 650;
+  color: #9a5b34;
+}
+.ai-ask strong {
+  color: #9a5b34;
+}
+.term-list {
+  margin: 14px 0 4px;
+}
+.term-title {
+  display: block;
+  font-size: 11px;
+  font-weight: 650;
+  margin-bottom: 8px;
+}
+.term-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 4px 10px;
+  margin-bottom: 8px;
+}
+.term-row input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--green);
+}
+.term-row select,
+.term-row input[type="number"] {
+  padding: 8px;
+  font-size: 11px;
+}
+.term-row.off select,
+.term-row.off input[type="number"] {
+  opacity: 0.5;
+}
+.term-row blockquote {
+  grid-column: 2 / -1;
+  margin: 0;
+  font-style: italic;
+  color: #79846b;
+  font-size: 10px;
+}
+.term-head {
+  font-size: 9px;
+  color: #8e9780;
+  margin-bottom: 2px;
+}
+.term-empty {
+  font-size: 10px;
+  color: #8e9780;
+}
+.preference-form .add-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 0 0;
 }
 .request-card {
   background: white;
@@ -2004,7 +2102,8 @@ code {
   .tiny-check {
     font-size: 9px;
   }
-  .preference-bottom strong {
+  .preference-bottom strong,
+  .preference-terms {
     font-size: 11px;
   }
   .flexibility-heading > span {

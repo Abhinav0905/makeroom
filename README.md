@@ -10,7 +10,7 @@ The example is narrow on purpose: one photography room, two prepaid appointments
 
 Open [MakeRoom](https://abhinav0905.github.io/makeroom/). No account or API key is needed for the guest practice studio. Each browser gets a separate fictional studio identified by a random practice ID in local storage. Practice payments are simulated. The AI reader makes actual Gemini calls, limited to 20 per studio and 200 across the demo per UTC day; reviewed terms and the planner work after that allowance is used.
 
-Choose **Customers**, read Alex's message with AI and review/save the result. Return to **Studio day**, find an arrangement, open and accept both customer offers, then complete the practice booking. Reset in **Connections** to try a $20 compensation budget or refuse an offer.
+Choose **Customers** and read Alex's message with AI. The message is deliberately messy: it offers three times at two refund amounts. The AI box lists each time that passes the studio's checks with the customer's own words, and shows any time it set aside with the reason, such as a start that would run past the 5 pm close. Tick, untick or edit the times, then save. Return to **Studio day**, find an arrangement, open and accept both customer offers, then complete the practice booking. Reset in **Connections** to try a $20 compensation budget or refuse an offer.
 
 The [sandbox evidence page](https://abhinav0905.github.io/makeroom/?view=proof) shows the completed account-backed PayPal run. Run locally with your own PayPal test accounts for a new sandbox run.
 
@@ -46,7 +46,7 @@ Start in practice mode. Connections can activate PayPal sandbox when credentials
 
 - GitHub Pages serves the React app: the studio calendar, preference review, customer offers and payment history. The same components also run in the Vinext server app.
 - Cloudflare Workers run the API behind the Pages app. GitHub Pages cannot execute server code. API keys stay on the server. D1 persists per-user studios, scoped offer links, transaction identifiers and the audit record.
-- Gemini proposes structured time/refund terms with exact source quotations. The response passes schema, opening-hours, time-grid and refund-limit checks. A person must review it before saving. Reviewed seed data works without a model connection and is labeled accordingly.
+- Gemini is asked to list every time/refund pair a customer's message offers, messy or not, each with a quotation. The server checks the reply's format and that each quotation appears in the message, ignoring case, spacing and curly quotes; the customer's exact words are stored, not the model's copy. A time outside opening hours, off the 15-minute grid, at the current start or above the refund limit is set aside with a plain reason, and the other times stay available. A person must review the times before saving, and saved AI terms keep their quotations. Reviewed seed data works without a model connection and is labeled accordingly.
 - A deterministic bounded search checks all allowed combinations, picks the lowest compensation cost and breaks ties by fewer moves. It never creates an alternative that was not reviewed.
 - PayPal Orders v2 creates original prepayments and authorizes the new booking. Payments v2 captures the authorization and partially refunds the two original captures.
 
