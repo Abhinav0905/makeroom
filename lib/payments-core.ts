@@ -13,6 +13,13 @@ import {
   type Move,
   type Studio,
 } from "./domain.ts";
+/** Where PayPal returns a buyer who pays from the checkout page. */
+export type CheckoutPage = {
+  returnUrl: string;
+  cancelUrl: string;
+  /** Runs inside the payment lock before any PayPal call; throws to refuse. */
+  check(s: Studio): void;
+};
 export type PaymentsDeps = {
   paypal(): PayPal;
   readStudio(owner: string): Promise<Studio>;
@@ -268,11 +275,20 @@ export function createPayments(deps: PaymentsDeps) {
       },
     );
   }
-  async function beginCheckout(owner: string, origin: string) {
+  // page is set when the new customer pays from their own checkout link: PayPal
+  // then returns the buyer to that page, and page.check refuses inside the
+  // payment lock when the link no longer fits the studio's current plan.
+  // Without it this is the studio owner's checkout, unchanged.
+  async function beginCheckout(
+    owner: string,
+    origin: string,
+    page?: CheckoutPage,
+  ) {
     return transaction(
       owner,
       "create-checkout",
       (s) => {
+        page?.check(s);
         assertReady(s);
       },
       async (s, save, api) => {
@@ -285,12 +301,13 @@ export function createPayments(deps: PaymentsDeps) {
               p.totalCharge,
               "AUTHORIZE",
               p.orderKey,
-              origin + "/?paypal=request",
-              origin + "/?paypal=cancel",
+              page ? page.returnUrl : origin + "/?paypal=request",
+              page ? page.cancelUrl : origin + "/?paypal=cancel",
               "Studio session with agreed flexibility refunds",
             );
         const url = approval(order);
         await save((s) => {
+          if (page && !p.orderId) s.plan!.checkoutOrder = true;
           s.plan!.orderId = order.id;
           s.plan!.approvalUrl = url;
           delete s.plan!.error;
@@ -305,11 +322,16 @@ export function createPayments(deps: PaymentsDeps) {
       },
     );
   }
-  async function finishApproval(owner: string, orderId: string) {
+  async function finishApproval(
+    owner: string,
+    orderId: string,
+    check?: (s: Studio) => void,
+  ) {
     return transaction(
       owner,
       "authorize",
       (s) => {
+        check?.(s);
         const p = s.plan;
         if (!p || p.orderId !== orderId)
           throw new DomainError(

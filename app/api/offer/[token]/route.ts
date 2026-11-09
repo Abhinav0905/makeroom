@@ -3,27 +3,9 @@ import { sameOrigin, body, json, failure } from "@/lib/http";
 import { offerOwner, updateStudio } from "@/lib/store";
 import { consent, expire, DomainError, type Studio } from "@/lib/domain";
 import { pagesOrigin, pagesCors, pagesPreflight } from "@/lib/pages-access";
+import { offerView as view } from "@/lib/customer-views";
 export const dynamic = "force-dynamic";
 type Context = { params: Promise<{ token: string }> };
-function view(s: Studio, token: string) {
-  const p = s.plan!;
-  const m = p.moves.find((m) => m.token === token)!;
-  return {
-    name: m.name,
-    from: m.from,
-    to: m.to,
-    duration: m.duration,
-    refund: m.refund,
-    date: s.date,
-    mode: s.mode,
-    consent: m.consent,
-    status: p.status,
-    expiresAt: p.expiresAt,
-    service: s.bookings.find((b) => b.id === m.bookingId)!.service,
-    committed: !!p.committed,
-    refundStatus: m.refundStatus,
-  };
-}
 function checkPagesOffer(req: Request, owner: string, studio: Studio) {
   if (pagesOrigin(req) && (!owner.startsWith("pages:") || studio.mode !== "practice"))
     throw new DomainError("This link is not a GitHub Pages practice offer.", 403);

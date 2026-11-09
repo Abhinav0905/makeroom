@@ -28,3 +28,7 @@ export function guestActionAllowed(action: string, mode?: unknown) {
     (action === "mode" && mode === "practice")
   );
 }
+/** Cookie guest and GitHub Pages studios: practice only, never PayPal. */
+export function guestOwner(owner: string) {
+  return owner.startsWith("guest:") || owner.startsWith("pages:");
+}

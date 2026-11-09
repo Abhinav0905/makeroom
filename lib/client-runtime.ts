@@ -12,6 +12,7 @@ export function appHref(path: string) {
   if (path === "/") return config.basePath;
   if (path === "/proof") return config.basePath + "?view=proof";
   if (path.startsWith("/offer/")) return config.basePath + "?offer=" + encodeURIComponent(path.slice(7));
+  if (path.startsWith("/checkout/")) return config.basePath + "?checkout=" + encodeURIComponent(path.slice(10));
   if (path.startsWith("/signin-with-chatgpt")) return config.apiOrigin + path;
   return config.basePath + path.slice(1);
 }

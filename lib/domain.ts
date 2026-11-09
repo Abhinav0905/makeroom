@@ -77,6 +77,13 @@ export type Plan = {
     | "complete"
     | "cancelled"
     | "review";
+  /**
+   * Secret link for the new customer's checkout page. Plans saved before the
+   * page existed have none.
+   */
+  checkoutToken?: string;
+  /** The PayPal order was created from the checkout page and returns there. */
+  checkoutOrder?: boolean;
   orderKey: string;
   authorizeKey: string;
   captureKey: string;
@@ -361,6 +368,7 @@ export function propose(
     totalRefund: result.cost,
     totalCharge: request.base + result.cost,
     status: "proposed",
+    checkoutToken: id() + id(),
     orderKey: id(),
     authorizeKey: id(),
     captureKey: id(),

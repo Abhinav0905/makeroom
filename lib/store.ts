@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { seed, DomainError, type Studio } from "./domain";
+import { CHECKOUT_TOKEN, isCurrentCheckout } from "./checkout";
 function db() {
   if (!env.DB) throw new Error("Studio storage is unavailable.");
   return env.DB;
@@ -70,15 +71,21 @@ export async function updateStudio(
     );
   return s;
 }
+// Registers every link of the current plan: each moved customer's offer and
+// the new customer's checkout. A plan with no moves still has a checkout.
 export async function saveOffers(owner: string, s: Studio) {
-  if (!s.plan?.moves.length) return;
+  const p = s.plan;
+  if (!p) return;
+  const tokens = p.moves.map((m) => m.token);
+  if (p.checkoutToken) tokens.push(p.checkoutToken);
+  if (!tokens.length) return;
   await db().batch(
-    s.plan.moves.map((m) =>
+    tokens.map((token) =>
       db()
         .prepare(
           "INSERT OR REPLACE INTO offers (token,owner,plan_id,expires_at) VALUES (?,?,?,?)",
         )
-        .bind(m.token, owner, s.plan!.id, s.plan!.expiresAt),
+        .bind(token, owner, p.id, p.expiresAt),
     ),
   );
 }
@@ -94,6 +101,23 @@ export async function offerOwner(token: string) {
   if (s.plan?.id !== o.plan_id || !s.plan.moves.some((m) => m.token === token))
     throw new DomainError(
       "The studio has replaced this offer. Ask for the latest link.",
+      410,
+    );
+  return { owner: o.owner, studio: s };
+}
+// Only the current plan's checkout link is accepted; offer links are not.
+export async function checkoutOwner(token: string) {
+  if (!CHECKOUT_TOKEN.test(token))
+    throw new DomainError("This booking link wasn't found.", 404);
+  const o = await db()
+    .prepare("SELECT owner,plan_id FROM offers WHERE token=?")
+    .bind(token)
+    .first<{ owner: string; plan_id: string }>();
+  if (!o) throw new DomainError("This booking link wasn't found.", 404);
+  const s = await readStudio(o.owner);
+  if (!isCurrentCheckout(s, o.plan_id, token))
+    throw new DomainError(
+      "The studio has replaced this booking link. Ask for the latest one.",
       410,
     );
   return { owner: o.owner, studio: s };

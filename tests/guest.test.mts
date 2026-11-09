@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { guestId, guestCookie, guestActionAllowed } from "../lib/guest.ts";
+import { guestId, guestCookie, guestActionAllowed, guestOwner } from "../lib/guest.ts";
 test("guest identity is restricted to a random UUID and hardened cookie", () => {
   const id = "32a76fb4-2e68-465a-8c4b-a8e4f01cd365";
   assert.equal(guestId("other=x; " + guestCookie(id, true)), id);
@@ -33,4 +33,11 @@ test("guest practice cannot request any PayPal mutation", () => {
     "reset",
   ])
     assert.equal(guestActionAllowed(action), true, action);
+});
+test("guest and GitHub Pages studios are recognised as practice-only owners", () => {
+  const id = "32a76fb4-2e68-465a-8c4b-a8e4f01cd365";
+  assert.equal(guestOwner("guest:" + id), true);
+  assert.equal(guestOwner("pages:" + id), true);
+  assert.equal(guestOwner("signed-in-user-id"), false);
+  assert.equal(guestOwner("user-guest:" + id), false);
 });

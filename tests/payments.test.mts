@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { PayPal, PayPalError, type PayPalResource } from "../lib/paypal.ts";
 import { createPayments } from "../lib/payments-core.ts";
+import { createCheckout } from "../lib/checkout.ts";
 import { canCheckCancelledHold } from "../lib/plan-ui.ts";
 import {
   assertEditable,
@@ -1215,3 +1216,208 @@ test("L3: funding an order still awaiting approval returns its link as before", 
   assert.equal(s.bookings[0].captureId, undefined);
   done(fake);
 });
+
+// The new customer's checkout link
+
+type OrderBody = {
+  purchase_units: { reference_id: string }[];
+  payment_source: {
+    paypal: { experience_context: { return_url: string; cancel_url: string } };
+  };
+};
+/** Maya's checkout link, wired to the same payments core and store. */
+function withCheckout(t: ReturnType<typeof setup>) {
+  const checkout = createCheckout({
+    payments: t.payments,
+    updateStudio: t.store.updateStudio,
+  });
+  const token = t.studio().plan!.checkoutToken!;
+  return {
+    token,
+    pay: () => checkout.pay(OWNER, t.studio(), token, ORIGIN),
+    approved: (orderId: string) =>
+      checkout.approved(OWNER, t.studio(), token, orderId),
+  };
+}
+/** Which plan key each POST used, by name. */
+function keyNames(fake: Fake, s: Studio) {
+  const p = s.plan!;
+  const names = new Map<string, string>([
+    [p.orderKey, "orderKey"],
+    [p.authorizeKey, "authorizeKey"],
+    [p.captureKey, "captureKey"],
+    ...p.moves.map((m) => [m.refundKey, "refundKey:" + m.bookingId] as [string, string]),
+  ]);
+  return fake.calls
+    .filter((c) => c.method === "POST")
+    .map((c) => names.get(c.key ?? "") ?? "unknown key " + c.key);
+}
+function happyPath(fake: Fake) {
+  fake
+    .on(CREATE, ok(ORDER_PAYER, 201))
+    .on(GET_ORDER, ok(ORDER_APPROVED))
+    .on(AUTHORIZE, ok(ORDER_AUTH("CREATED"), 201))
+    .on(CAPTURE, ok(CAP("COMPLETED"), 201))
+    .on(GET_CAP, ok(CAP("COMPLETED")));
+  refundsComplete(fake);
+}
+
+test("M1: paying from Maya's link makes the studio's PayPal calls with the same keys", async () => {
+  const studioPath = setup();
+  happyPath(studioPath.fake);
+  await studioPath.payments.beginCheckout(OWNER, ORIGIN);
+  await studioPath.payments.finishApproval(OWNER, "ORD");
+  await studioPath.payments.captureAndSettle(OWNER);
+
+  const maya = setup();
+  const link = withCheckout(maya);
+  happyPath(maya.fake);
+  const r = await link.pay();
+  assert.equal(r.approvalUrl, APPROVAL, "the same sandbox approval link check");
+  assert.equal(r.studio.plan!.checkoutOrder, true);
+  let s = await link.approved("ORD");
+  assert.equal(s.plan!.status, "authorized");
+  assert.equal(s.plan!.authorizationId, "AUTH");
+  assert.equal(s.plan!.committed, undefined, "the studio still confirms");
+  // Capture and refunds stay the studio's "Confirm booking & issue refunds".
+  s = await maya.payments.captureAndSettle(OWNER);
+  assert.equal(s.plan!.status, "complete");
+
+  assert.deepEqual(maya.fake.routes(), studioPath.fake.routes());
+  assert.equal(maya.fake.tokens, studioPath.fake.tokens);
+  assert.deepEqual(keyNames(maya.fake, maya.studio()), [
+    "orderKey",
+    "authorizeKey",
+    "captureKey",
+    "refundKey:alex",
+    "refundKey:sam",
+  ]);
+  assert.deepEqual(
+    keyNames(maya.fake, maya.studio()),
+    keyNames(studioPath.fake, studioPath.studio()),
+  );
+  // Only PayPal's return and cancel addresses differ: back to Maya's page.
+  const [mayaOrder, studioOrder] = [maya, studioPath].map(
+    (t) => t.fake.to(CREATE)[0].body as OrderBody,
+  );
+  const page = ORIGIN + "/checkout/" + link.token;
+  assert.deepEqual(mayaOrder.payment_source.paypal.experience_context, {
+    ...studioOrder.payment_source.paypal.experience_context,
+    return_url: page + "?paypal=approved",
+    cancel_url: page + "?paypal=cancel",
+  });
+  assert.deepEqual(studioOrder.payment_source.paypal.experience_context.return_url, ORIGIN + "/?paypal=request");
+  const comparable = (b: OrderBody, key: string) =>
+    JSON.stringify(b)
+      .replaceAll(key, "KEY")
+      .replace(/"return_url":"[^"]*"/, "")
+      .replace(/"cancel_url":"[^"]*"/, "");
+  assert.equal(
+    comparable(mayaOrder, maya.studio().plan!.orderKey),
+    comparable(studioOrder, studioPath.studio().plan!.orderKey),
+  );
+  assert.equal(studioPath.studio().plan!.checkoutOrder, undefined);
+  assert.deepEqual(
+    maya.studio().bookings.map((b) => [b.start, b.refunded]),
+    studioPath.studio().bookings.map((b) => [b.start, b.refunded]),
+  );
+  done(maya.fake);
+  done(studioPath.fake);
+});
+
+test("M2: a PayPal return with another order is refused without calling PayPal", async () => {
+  const t = setup((s) => {
+    withOrder(s);
+    s.plan!.checkoutOrder = true;
+  });
+  const link = withCheckout(t);
+  await assert.rejects(
+    link.approved("SOMEONE-ELSES-ORDER"),
+    (e: unknown) =>
+      e instanceof Error &&
+      /doesn't match your booking/.test(e.message) &&
+      (e as { status?: number }).status === 400,
+  );
+  const before = setup();
+  await assert.rejects(withCheckout(before).approved("ORD"), /doesn't match/);
+  assert.equal(t.studio().plan!.status, "proposed");
+  assert.equal(t.studio().plan!.authorizationId, undefined);
+  assert.equal(t.studio().operation, undefined);
+  assert.equal(t.fake.calls.length + t.fake.tokens, 0);
+  assert.equal(before.fake.calls.length + before.fake.tokens, 0);
+});
+
+test("M3: Maya's link reopens her own checkout and records a reload only once", async () => {
+  const t = setup((s) => {
+    withOrder(s);
+    s.plan!.checkoutOrder = true;
+  });
+  const link = withCheckout(t);
+  t.fake.on(GET_ORDER, ok(ORDER_PAYER));
+  const r = await link.pay();
+  assert.equal(r.approvalUrl, APPROVAL);
+  assert.deepEqual(t.fake.routes(), [GET_ORDER], "no second order");
+  done(t.fake);
+
+  const held = setup((s) => {
+    authorized(s);
+    s.plan!.checkoutOrder = true;
+  });
+  const s = await withCheckout(held).approved("ORD");
+  assert.equal(s.plan!.status, "authorized");
+  assert.equal(held.fake.calls.length + held.fake.tokens, 0);
+});
+
+for (const [label, shape, message] of [
+  [
+    "a customer has not answered",
+    (s: Studio) => {
+      s.plan!.moves[1].consent = "waiting";
+    },
+    /Waiting for 1 more customer to agree/,
+  ],
+  [
+    "the offer expired",
+    (s: Studio) => {
+      s.plan!.expiresAt = new Date(Date.now() - 60_000).toISOString();
+    },
+    /booking link has expired/,
+  ],
+  [
+    "a customer declined",
+    (s: Studio) => {
+      s.plan!.moves[1].consent = "declined";
+      s.plan!.status = "declined";
+    },
+    /keep their original time/,
+  ],
+  ["the hold is already approved", authorized, /already approved/],
+  ["the booking is confirmed", committed, /already booked and paid/],
+  [
+    "the payment is being checked",
+    (s: Studio) => {
+      withOrder(s);
+      s.plan!.status = "review";
+    },
+    /checking this payment/,
+  ],
+  [
+    "the studio already opened PayPal",
+    withOrder,
+    /studio already opened PayPal/,
+  ],
+  [
+    "an original booking is not funded",
+    (s: Studio) => {
+      delete s.bookings[1].captureId;
+    },
+    /hasn't finished setting up payments/,
+  ],
+] as const)
+  test(`M4: paying from Maya's link is refused when ${label}, before any PayPal call`, async () => {
+    const t = setup(shape);
+    const before = t.studio();
+    await assert.rejects(withCheckout(t).pay(), message);
+    assert.equal(t.studio().version, before.version, "nothing saved");
+    assert.equal(t.fake.calls.length + t.fake.tokens, 0);
+  });

@@ -22,5 +22,8 @@ export const integrationStatus = () => {
     aiModel: c.GEMINI_MODEL || "gemini-2.5-flash",
     webhooks: !!c.PAYPAL_WEBHOOK_ID,
     signIn: c.MAKEROOM_SIGNIN !== "off",
+    // The new customer's checkout page and its API exist. The GitHub Pages
+    // frontend can talk to an older backend, so it shows the link only then.
+    checkoutPage: true,
   };
 };
