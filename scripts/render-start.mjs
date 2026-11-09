@@ -49,6 +49,7 @@ const args = [
 // app's same-origin checks match what the browser sends.
 if (host) args.push("--local-upstream", host, "--upstream-protocol", process.env.MAKEROOM_UPSTREAM_PROTOCOL || "https");
 
-const child = spawn(process.execPath, args, { stdio: "inherit", env: { ...process.env, CI: "true" } });
+// X_LOCAL_EXPLORER=false keeps Wrangler's local database explorer switched off on a public host.
+const child = spawn(process.execPath, args, { stdio: "inherit", env: { ...process.env, CI: "true", X_LOCAL_EXPLORER: "false" } });
 for (const signal of ["SIGTERM", "SIGINT"]) process.on(signal, () => child.kill(signal));
 child.on("exit", (code) => process.exit(code ?? 0));
