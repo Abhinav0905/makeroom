@@ -60,7 +60,7 @@ The eight-message result above was measured before these changes. `scripts/evalu
 
 ## Local checks
 
-- 101 automated tests pass, including a sweep across valid time-grid scenarios, guest payment restrictions, 57 payment-state tests and 20 tests of the AI checks (quotation matching, set-aside reasons, provider failure messages and keeping quotations on save). The payment-state tests run each payment step against a scripted PayPal sandbox inside the test process, with no network calls: the recorded happy-path call sequence and request IDs, recovery from timeouts, declines, pending results and lost redirects, voids and cancels, and each customer's refund on its own. Five more tests check which payment buttons the studio shows.
+- 120 automated tests pass, including a sweep across valid time-grid scenarios, guest payment restrictions, 68 payment-state tests and 20 tests of the AI checks (quotation matching, set-aside reasons, provider failure messages and keeping quotations on save). The payment-state tests run each payment step against a scripted PayPal sandbox inside the test process, with no network calls: the recorded happy-path call sequence and request IDs, the same calls and request IDs when Maya pays from her own checkout link, recovery from timeouts, declines, pending results and lost redirects, voids and cancels, and each customer's refund on its own. Six more tests check which payment buttons and links the studio shows, and six check Maya's checkout link: a new secret link per plan, what the page shows, and when a practice payment is refused.
 - TypeScript check passed.
 - ESLint passed.
 - Practice journey completed in Chrome, including separate customer offers and simulated settlement.
