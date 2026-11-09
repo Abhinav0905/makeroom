@@ -433,6 +433,8 @@ export function createPayments(deps: PaymentsDeps) {
     if (!captureId) return manual("Original payment reference is missing.");
     let refundId = move.refundId;
     let key = move.refundKey;
+    // This key already went to PayPal once and no definite answer came back.
+    let repeat = false;
     if (RETRY_REFUND.includes(move.refundStatus ?? "")) {
       if (refundId) {
         let r: PayPalResource;
@@ -455,14 +457,13 @@ export function createPayments(deps: PaymentsDeps) {
         delete m.refundAttemptAt;
         delete m.refundError;
       });
-    } else if (
-      !refundId &&
-      move.refundAttemptAt &&
-      now() - Date.parse(move.refundAttemptAt) > 5 * 60 * 60_000
-    )
-      return manual(
-        "An earlier refund has an unknown result. Check it in PayPal before making another refund.",
-      );
+    } else if (!refundId && move.refundAttemptAt) {
+      if (now() - Date.parse(move.refundAttemptAt) > 5 * 60 * 60_000)
+        return manual(
+          "An earlier refund has an unknown result. Check it in PayPal before making another refund.",
+        );
+      repeat = true;
+    }
     await update((m) => {
       m.refundAttemptAt ??= new Date(now()).toISOString();
       m.refundStatus ??= "REQUESTED";
@@ -475,6 +476,14 @@ export function createPayments(deps: PaymentsDeps) {
     } catch (e) {
       if (refundId || !definitelyRefused(e)) return unsure(e);
       const issue = e.issue ?? "REQUEST_FAILED";
+      // Refusing a repeat does not prove the first request failed: it may be
+      // in progress or done, so a new key could pay this customer twice.
+      if (repeat)
+        return manual(
+          "PayPal refused a repeat of an earlier refund whose result is unknown (" +
+            issue +
+            "). Check it in PayPal before making another refund.",
+        );
       await update((m, s) => {
         m.refundStatus = "REJECTED";
         m.refundError = issue;

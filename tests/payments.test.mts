@@ -857,6 +857,49 @@ test("F6: a refund with the wrong amount is flagged and not retried", async () =
   done(fake);
 });
 
+test("F7: a refund repeated after a timeout and then refused goes to manual review", async () => {
+  const { fake, payments, studio } = setup(authorized);
+  fake.on(CAPTURE, ok(CAP("COMPLETED"), 201)).on(GET_CAP, ok(CAP("COMPLETED")));
+  refundsComplete(fake, TIMEOUT);
+  await assert.rejects(
+    payments.captureAndSettle(OWNER),
+    /Some refunds need attention/,
+  );
+  const key = studio().plan!.moves[0].refundKey;
+  assert.equal(studio().plan!.moves[0].refundStatus, "REQUESTED");
+
+  // The repeat is refused, but the first request may still be in progress or
+  // done, so a new key could pay Alex twice.
+  fake
+    .on(GET_CAP, ok(CAP("COMPLETED")))
+    .on(REFUND_A, err(422, "PREVIOUS_REQUEST_IN_PROGRESS"));
+  await assert.rejects(
+    payments.reconcile(OWNER),
+    /Alex: .*PREVIOUS_REQUEST_IN_PROGRESS.*Check it in PayPal/,
+  );
+  let s = studio();
+  const alex = s.plan!.moves[0];
+  assert.equal(alex.refundStatus, "UNKNOWN");
+  assert.equal(alex.refundKey, key, "no new key");
+  assert.equal(alex.previousRefundIds, undefined);
+  assert.match(alex.refundError ?? "", /PREVIOUS_REQUEST_IN_PROGRESS/);
+  assert.equal(s.plan!.status, "settling");
+  assert.ok(s.events.some((e) => e.title === "Refund needs manual review"));
+  assert.deepEqual(
+    fake.to(REFUND_A).map((c) => c.key),
+    [key, key],
+  );
+
+  // Later checks leave it for a person to resolve.
+  fake.on(GET_CAP, ok(CAP("COMPLETED")));
+  await assert.rejects(payments.reconcile(OWNER), /Some refunds need attention/);
+  s = studio();
+  assert.equal(s.plan!.moves[0].refundKey, key);
+  assert.equal(fake.to(REFUND_A).length, 2);
+  assert.deepEqual(refunded(s), [0, 1000]);
+  done(fake);
+});
+
 // Locks, modes and funding
 
 test("L1: a running step blocks payments; reconcile takes over a stale lock", async () => {
