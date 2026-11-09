@@ -1,5 +1,6 @@
 "use client";
-import Link from "next/link";
+import Link from "./app-link";
+import { apiFetch, appHref, staticRuntime } from "@/lib/client-runtime";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
@@ -58,7 +59,7 @@ export default function StudioApp() {
   const processed = useRef(false);
   const helpRef = useRef<HTMLDialogElement>(null);
   const refresh = useCallback(async () => {
-    const res = await fetch("/api/studio", { cache: "no-store" });
+    const res = await apiFetch("/api/studio", { cache: "no-store" });
     const d = (await res.json()) as {
       studio: Studio;
       integrations: Integrations;
@@ -102,7 +103,7 @@ export default function StudioApp() {
     setError("");
     setNotice("");
     try {
-      const res = await fetch("/api/studio", {
+      const res = await apiFetch("/api/studio", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, version: studio.version, ...data }),
@@ -171,7 +172,7 @@ export default function StudioApp() {
   }
   async function copyOffer(token: string) {
     try {
-      await navigator.clipboard.writeText(location.origin + "/offer/" + token);
+      await navigator.clipboard.writeText(new URL(appHref("/offer/" + token), location.origin).href);
       setNotice(
         "Customer offer link copied. Send it only to the intended customer.",
       );
@@ -264,7 +265,7 @@ export default function StudioApp() {
             How it works
             <ArrowUpRight size={15} />
           </button>
-          <a className="nav-item" href="/proof">
+          <a className="nav-item" href={appHref("/proof")}>
             Sandbox evidence <ArrowUpRight size={15} />
           </a>
           <div className="studio-profile">
@@ -327,7 +328,7 @@ export default function StudioApp() {
               </div>
               <a
                 className="button primary"
-                href="/signin-with-chatgpt?return_to=%2F"
+                href={appHref("/signin-with-chatgpt?return_to=%2F")}
                 target="_top"
               >
                 Open my studio <ArrowRight size={16} />
@@ -636,7 +637,7 @@ export default function StudioApp() {
                             {!p.committed && m.consent === "waiting" && (
                               <div className="move-actions">
                                 <a
-                                  href={"/offer/" + m.token}
+                                  href={appHref("/offer/" + m.token)}
                                   target="_blank"
                                   rel="noreferrer"
                                 >
@@ -950,13 +951,13 @@ export default function StudioApp() {
                   {integrations.guest && (
                     <p>
                       Guest payments are simulated.{" "}
-                      <a
-                        href="/signin-with-chatgpt?return_to=%2F"
+                      {!staticRuntime() && <><a
+                        href={appHref("/signin-with-chatgpt?return_to=%2F")}
                         target="_top"
                       >
                         Sign in
                       </a>{" "}
-                      for a separate PayPal sandbox workspace, or follow the{" "}
+                      for a separate PayPal sandbox workspace, or </>}follow the{" "}
                       <a
                         href="https://github.com/Abhinav0905/makeroom#run-locally"
                         target="_blank"

@@ -43,3 +43,7 @@ Run `node scripts/evaluate-ai.mts` to repeat using a configured Gemini key. Outp
 ## Not established
 
 No real studio has validated demand. No external customer pilot, real-money checkout, dispute test or load test has been run. Model responses can still misinterpret customer language. There is no claim of webhook delivery, calendar-platform integration, tax calculation or a production accounting ledger.
+
+## GitHub Pages frontend
+
+The public React app is also built as static files for GitHub Pages. Twenty-three automated tests pass, including three tests for the Pages origin allowlist, practice-only identity namespace and absence of credentialed CORS. Server secrets remain in the API environment.

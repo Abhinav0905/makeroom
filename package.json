@@ -14,7 +14,9 @@
     "db:generate": "drizzle-kit generate",
     "db:local": "node scripts/init-local-db.mjs",
     "test": "node --test tests/*.test.mts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:pages": "vite build --config vite.pages.config.ts",
+    "preview:pages": "vite preview --config vite.pages.config.ts --host 127.0.0.1 --port 5188"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

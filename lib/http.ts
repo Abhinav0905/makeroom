@@ -2,7 +2,13 @@ import { getChatGPTUser } from "@/app/chatgpt-auth";
 import { DomainError } from "./domain";
 import { PayPalError } from "./paypal";
 import { guestId, guestCookie } from "./guest";
+import { pagesIdentity, pagesOrigin, PRACTICE_HEADER } from "./pages-access";
 export async function workspace(req: Request, create = false) {
+  if (pagesOrigin(req) || req.headers.has(PRACTICE_HEADER)) {
+    const owner = pagesIdentity(req);
+    if (!owner) throw new DomainError("Open your GitHub Pages practice studio first.", 403);
+    return { owner, guest: true, cookie: undefined };
+  }
   const user = await getChatGPTUser();
   if (user) return { owner: user.userId, guest: false, cookie: undefined };
   const existing = guestId(req.headers.get("cookie"));
@@ -18,6 +24,7 @@ export async function workspace(req: Request, create = false) {
   };
 }
 export function sameOrigin(req: Request) {
+  if (pagesIdentity(req)) return;
   const origin = req.headers.get("origin");
   if (!origin || origin !== new URL(req.url).origin)
     throw new DomainError(

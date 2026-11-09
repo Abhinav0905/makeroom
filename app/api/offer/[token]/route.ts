@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { sameOrigin, body, json, failure } from "@/lib/http";
 import { offerOwner, updateStudio } from "@/lib/store";
-import { consent, expire, type Studio } from "@/lib/domain";
+import { consent, expire, DomainError, type Studio } from "@/lib/domain";
+import { pagesOrigin, pagesCors, pagesPreflight } from "@/lib/pages-access";
 export const dynamic = "force-dynamic";
 type Context = { params: Promise<{ token: string }> };
 function view(s: Studio, token: string) {
@@ -23,10 +24,15 @@ function view(s: Studio, token: string) {
     refundStatus: m.refundStatus,
   };
 }
-export async function GET(_req: Request, ctx: Context) {
+function checkPagesOffer(req: Request, owner: string, studio: Studio) {
+  if (pagesOrigin(req) && (!owner.startsWith("pages:") || studio.mode !== "practice"))
+    throw new DomainError("This link is not a GitHub Pages practice offer.", 403);
+}
+async function get(req: Request, ctx: Context) {
   try {
     const { token } = await ctx.params;
     const { owner, studio } = await offerOwner(token);
+    checkPagesOffer(req, owner, studio);
     const s =
       studio.plan?.status === "proposed" &&
       Date.parse(studio.plan.expiresAt) < Date.now()
@@ -37,11 +43,12 @@ export async function GET(_req: Request, ctx: Context) {
     return failure(e);
   }
 }
-export async function POST(req: Request, ctx: Context) {
+async function post(req: Request, ctx: Context) {
   try {
     sameOrigin(req);
     const { token } = await ctx.params;
-    const { owner } = await offerOwner(token);
+    const { owner, studio } = await offerOwner(token);
+    checkPagesOffer(req, owner, studio);
     const data = z
       .object({ answer: z.enum(["accepted", "declined"]) })
       .strict()
@@ -52,3 +59,6 @@ export async function POST(req: Request, ctx: Context) {
     return failure(e);
   }
 }
+export const OPTIONS = pagesPreflight;
+export async function GET(req: Request, ctx: Context) { return pagesCors(req, await get(req, ctx)); }
+export async function POST(req: Request, ctx: Context) { return pagesCors(req, await post(req, ctx)); }

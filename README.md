@@ -8,11 +8,11 @@ The example is narrow on purpose: one photography room, two prepaid appointments
 
 ## Try the public demo
 
-Open [MakeRoom](https://makeroom-studio.abhinav-0905.chatgpt.site). No account or API key is needed for the guest practice studio. Each browser gets a separate fictional studio, saved in an HttpOnly cookie for one day. Practice payments are simulated. The AI reader makes actual Gemini calls, limited to 20 per studio and 200 across the demo per UTC day; reviewed terms and the planner work after that allowance is used.
+Open [MakeRoom](https://abhinav0905.github.io/makeroom/). No account or API key is needed for the guest practice studio. Each browser gets a separate fictional studio identified by a random practice ID in local storage. Practice payments are simulated. The AI reader makes actual Gemini calls, limited to 20 per studio and 200 across the demo per UTC day; reviewed terms and the planner work after that allowance is used.
 
 Choose **Customers**, read Alex's message with AI and review/save the result. Return to **Studio day**, find an arrangement, open and accept both customer offers, then complete the practice booking. Reset in **Connections** to try a $20 compensation budget or refuse an offer.
 
-The [sandbox evidence page](https://makeroom-studio.abhinav-0905.chatgpt.site/proof) shows the completed account-backed PayPal run. Sign in through Connections for a separate sandbox workspace, or run locally with your own PayPal test accounts.
+The [sandbox evidence page](https://abhinav0905.github.io/makeroom/?view=proof) shows the completed account-backed PayPal run. Run locally with your own PayPal test accounts for a new sandbox run.
 
 ## Run locally
 
@@ -42,11 +42,17 @@ Start in practice mode. Connections can activate PayPal sandbox when credentials
 
 ## What runs where
 
-- React and Vinext render the studio calendar, preference review, customer offers and payment history.
-- Cloudflare Workers run the API. D1 persists per-user studios, scoped offer links, transaction identifiers and the audit record.
+- GitHub Pages serves the React app: the studio calendar, preference review, customer offers and payment history. The same components also run in the Vinext server app.
+- Cloudflare Workers run the API behind the Pages app. GitHub Pages cannot execute server code. API keys stay on the server. D1 persists per-user studios, scoped offer links, transaction identifiers and the audit record.
 - Gemini proposes structured time/refund terms with exact source quotations. The response passes schema, opening-hours, time-grid and refund-limit checks. A person must review it before saving. Reviewed seed data works without a model connection and is labeled accordingly.
 - A deterministic bounded search checks all allowed combinations, picks the lowest compensation cost and breaks ties by fewer moves. It never creates an alternative that was not reviewed.
 - PayPal Orders v2 creates original prepayments and authorizes the new booking. Payments v2 captures the authorization and partially refunds the two original captures.
+
+## GitHub Pages deployment
+
+The public frontend is built with `npm run build:pages` and published by `.github/workflows/pages.yml`. It uses query-string routes so customer links and the evidence page work on a static host. The API origin is configured in `github-pages/main.tsx`; CORS allows only `https://abhinav0905.github.io`. Pages requests omit cookies and are always assigned a separate `pages:` practice identity, even if the visitor is signed into the server app. They cannot call PayPal mutations or view signed-in sandbox offers. No server secret is included in the Pages build.
+
+The API and database continue to run on Cloudflare Workers through the existing Sites deployment. Local/server setup remains available for account-backed sandbox testing.
 
 ## Payment and consent boundaries
 

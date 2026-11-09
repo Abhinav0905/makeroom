@@ -1,4 +1,5 @@
-import Link from "next/link";
+import Link from "@/components/app-link";
+import { appHref } from "@/lib/client-runtime";
 import { ArrowLeft, CheckCircle2, ExternalLink } from "lucide-react";
 
 export default function ProofPage() {
@@ -81,7 +82,7 @@ export default function ProofPage() {
           </tbody>
         </table>
         <a
-          href="/evidence/sandbox-verification.json"
+          href={appHref("/evidence/sandbox-verification.json")}
           target="_blank"
           rel="noreferrer"
         >
@@ -96,7 +97,7 @@ export default function ProofPage() {
           simulated. Each browser gets its own practice record.
         </p>
         <p>
-          For a fresh PayPal sandbox run, sign in through Connections or follow
+          For a fresh PayPal sandbox run, follow
           the repository instructions with your own sandbox merchant and buyer
           accounts. The recorded run used one sandbox buyer to represent three
           fictional customers.

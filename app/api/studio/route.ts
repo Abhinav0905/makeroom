@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { workspace, sameOrigin, body, json, failure } from "@/lib/http";
 import { guestActionAllowed } from "@/lib/guest";
+import { pagesCors, pagesPreflight } from "@/lib/pages-access";
 import {
   readStudio,
   updateStudio,
@@ -48,7 +49,7 @@ const preferenceSchema = z
       .max(16),
   })
   .strict();
-export async function GET(req: Request) {
+async function get(req: Request) {
   try {
     const { owner, guest, cookie } = await workspace(req, true);
     let s = await readStudio(owner);
@@ -67,7 +68,7 @@ export async function GET(req: Request) {
     return failure(e);
   }
 }
-export async function POST(req: Request) {
+async function post(req: Request) {
   try {
     sameOrigin(req);
     const { owner, guest } = await workspace(req);
@@ -247,3 +248,6 @@ export async function POST(req: Request) {
     return failure(e);
   }
 }
+export const OPTIONS = pagesPreflight;
+export async function GET(req: Request) { return pagesCors(req, await get(req)); }
+export async function POST(req: Request) { return pagesCors(req, await post(req)); }

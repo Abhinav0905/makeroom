@@ -1,5 +1,6 @@
 "use client";
-import Link from "next/link";
+import Link from "./app-link";
+import { apiFetch } from "@/lib/client-runtime";
 import { useEffect, useState } from "react";
 import {
   ArrowRight,
@@ -30,7 +31,7 @@ export default function CustomerOffer({ token }: { token: string }) {
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
   useEffect(() => {
-    fetch("/api/offer/" + token)
+    apiFetch("/api/offer/" + token)
       .then(async (r) => {
         const d = (await r.json()) as Offer & { error?: string };
         if (!r.ok) throw Error(d.error || "Request failed.");
@@ -42,7 +43,7 @@ export default function CustomerOffer({ token }: { token: string }) {
     setBusy(true);
     setError("");
     try {
-      const r = await fetch("/api/offer/" + token, {
+      const r = await apiFetch("/api/offer/" + token, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ answer }),

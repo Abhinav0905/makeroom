@@ -49,6 +49,7 @@
     ".wrangler",
     ".sites-runtime",
     "outputs",
-    "work"
+    "work",
+    "pages-dist"
   ]
 }
