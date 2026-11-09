@@ -5,6 +5,7 @@ import {
   preferencePrompt,
   normalizeQuote,
   quoteFound,
+  locateQuote,
 } from "../lib/preference.ts";
 import { readPreference } from "../lib/gemini.ts";
 const message = "I can move to 1 pm for $15 back.";
@@ -164,20 +165,59 @@ test("quote matching ignores curly quotes, spacing and case but not invented wor
       ),
     /cite/,
   );
-  assert.equal(
-    validateDraft(
-      {
-        ...valid,
-        alternatives: [
-          { ...valid.alternatives[0], evidence: "i CAN move to 1 pm" },
-        ],
-      },
-      message,
-      60,
-      6000,
-    ).alternatives.length,
-    1,
+  const relaxed = validateDraft(
+    {
+      ...valid,
+      alternatives: [
+        { ...valid.alternatives[0], evidence: "i CAN move to 1 pm" },
+      ],
+    },
+    message,
+    60,
+    6000,
   );
+  assert.equal(relaxed.alternatives.length, 1);
+  // The customer's exact words are kept, not the model's variant.
+  assert.equal(relaxed.alternatives[0].evidence, "I can move to 1 pm");
+});
+test("a loose quote match returns the customer's exact words", () => {
+  assert.equal(
+    locateQuote(messy, "thursday\u2019s a BIT   tight"),
+    "Thursday's a bit tight",
+  );
+  assert.equal(
+    locateQuote("Thursday\u2019s a bit tight", "thursday's a bit tight"),
+    "Thursday\u2019s a bit tight",
+  );
+  assert.equal(
+    locateQuote("Sure.  I can  come in\nat 1 pm!", "i can come in at 1 PM"),
+    "I can  come in\nat 1 pm",
+  );
+  assert.equal(
+    locateQuote("I\u2019d take \uFF04 15 back", "I'd take $ 15"),
+    "I\u2019d take \uFF04 15",
+  );
+  assert.equal(
+    locateQuote("\uFB01ne by me at 4", "fine by me"),
+    "\uFB01ne by me",
+  );
+  // A match may not begin or end inside one of the customer's characters.
+  assert.equal(locateQuote("\uFB01ne by me at 4", "ine by me"), null);
+  assert.equal(
+    locateQuote("Caf\u00E9 at 4 works", "\u0301 at 4 works"),
+    null,
+  );
+  assert.equal(locateQuote("Caf\u00E9 at 4 works", "cafe at 4"), null);
+  assert.equal(
+    locateQuote("Caf\u00E9 at 4 works", "cafe\u0301 AT 4"),
+    "Caf\u00E9 at 4",
+  );
+  assert.equal(locateQuote(messy, "I can come at 2"), null);
+  const shouted = messy.toUpperCase();
+  const out = validateDraft(messyDraft, shouted, 60, 6000, 840);
+  for (const a of [...out.alternatives, ...out.rejected])
+    assert.ok(shouted.includes(a.evidence), a.evidence);
+  assert.equal(out.rejected[0].evidence, "4:30 IS FINE AS WELL, SAME $20.");
 });
 test("refusal is valid and customer text is explicitly untrusted", () => {
   assert.equal(

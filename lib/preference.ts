@@ -52,21 +52,74 @@ function schemaProblem(error: z.ZodError) {
 }
 export const toMinutes = (hhmm: string) =>
   Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
-/** Normalises text for quote matching: NFKC, straight quotes, single spaces, lower case. */
+const SINGLE_QUOTES = /[\u2018\u2019\u201A\u201B\u2032`\u00B4]/;
+const DOUBLE_QUOTES = /[\u201C\u201D\u201E\u201F\u2033\u00AB\u00BB]/;
+/** Folds one character for quote matching: straight quotes, NFKD, lower case. */
+function foldChar(c: string) {
+  const straight = SINGLE_QUOTES.test(c)
+    ? "'"
+    : DOUBLE_QUOTES.test(c)
+      ? '"'
+      : c;
+  return straight.normalize("NFKD").toLowerCase();
+}
+/**
+ * Folds text for quote matching and records, for every folded code unit, the
+ * span of the original text it came from. Whitespace runs become one space.
+ */
+function foldText(text: string) {
+  let folded = "";
+  const from: number[] = [];
+  const to: number[] = [];
+  let i = 0;
+  for (const c of text) {
+    const end = i + c.length;
+    for (const f of foldChar(c)) {
+      if (/\s/.test(f)) {
+        if (folded.endsWith(" ")) {
+          to[to.length - 1] = end;
+          continue;
+        }
+        folded += " ";
+        from.push(i);
+        to.push(end);
+      } else {
+        folded += f;
+        for (let k = 0; k < f.length; k++) {
+          from.push(i);
+          to.push(end);
+        }
+      }
+    }
+    i = end;
+  }
+  return { folded, from, to };
+}
+/** Normalises text for quote matching: straight quotes, NFKD, single spaces, lower case. */
 export function normalizeQuote(text: string) {
-  return text
-    .normalize("NFKC")
-    .replace(/[\u2018\u2019\u201A\u201B\u2032`\u00B4]/g, "'")
-    .replace(/[\u201C\u201D\u201E\u201F\u2033\u00AB\u00BB]/g, '"')
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
+  return foldText(text).folded.trim();
+}
+/**
+ * Finds a quote in the customer's message, ignoring case, spacing, curly
+ * quotes and Unicode compatibility forms. Returns the customer's own words for
+ * the matched span, exactly as written in the message, or null when the quote
+ * is too short or not there. The model's spelling of the quote is never kept.
+ */
+export function locateQuote(message: string, quote: string): string | null {
+  const q = normalizeQuote(quote);
+  if (q.replace(/\s/g, "").length < 3) return null;
+  const { folded, from, to } = foldText(message);
+  for (let s = folded.indexOf(q); s !== -1; s = folded.indexOf(q, s + 1)) {
+    const e = s + q.length;
+    // Skip matches that start or end inside one original character's folding.
+    const startsCleanly = s === 0 || from[s - 1] !== from[s];
+    const endsCleanly = e === folded.length || from[e] !== from[e - 1];
+    if (startsCleanly && endsCleanly) return message.slice(from[s], to[e - 1]);
+  }
+  return null;
 }
 export function quoteFound(message: string, quote: string) {
-  const q = normalizeQuote(quote);
-  return (
-    q.replace(/\s/g, "").length >= 3 && normalizeQuote(message).includes(q)
-  );
+  return locateQuote(message, quote) !== null;
 }
 /** Returns a short plain reason when an alternative breaks a studio rule, or null when it fits. */
 export function ruleProblem(
@@ -104,11 +157,14 @@ export function validateDraft(
     );
   const alternatives: DraftAlternative[] = [];
   const rejected: RejectedDraftAlternative[] = [];
-  for (const a of parsed.alternatives) {
-    if (!quoteFound(message, a.evidence))
+  for (const parsedAlt of parsed.alternatives) {
+    const evidence = locateQuote(message, parsedAlt.evidence);
+    if (evidence === null)
       throw new DraftError(
         "The suggested terms do not cite the customer's message: a quote was too short or not found in it.",
       );
+    // Keep the customer's exact words, not the model's copy of them.
+    const a = { ...parsedAlt, evidence };
     const reason = ruleProblem(
       toMinutes(a.start),
       a.refundCents,
