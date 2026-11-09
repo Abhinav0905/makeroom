@@ -33,7 +33,7 @@ Run `node scripts/evaluate-ai.mts` to repeat using a configured Gemini key. Outp
 
 ## Local checks
 
-- 20 automated tests passed, including a sweep across valid time-grid scenarios and guest payment restrictions.
+- 85 automated tests pass, including a sweep across valid time-grid scenarios, guest payment restrictions and 57 payment-state tests. The payment-state tests run each payment step against a scripted PayPal sandbox inside the test process, with no network calls: the recorded happy-path call sequence and request IDs, recovery from timeouts, declines, pending results and lost redirects, voids and cancels, and each customer's refund on its own. Five more tests check which payment buttons the studio shows.
 - TypeScript check passed.
 - ESLint passed.
 - Practice journey completed in Chrome, including separate customer offers and simulated settlement.
@@ -46,6 +46,6 @@ No real studio has validated demand. No external customer pilot, real-money chec
 
 ## GitHub Pages frontend
 
-The public React app is also built as static files for GitHub Pages. Twenty-three automated tests pass, including three tests for the Pages origin allowlist, practice-only identity namespace and absence of credentialed CORS. Server secrets remain in the API environment.
+The public React app is also built as static files for GitHub Pages. The automated tests include three for the Pages origin allowlist, practice-only identity namespace and absence of credentialed CORS. Server secrets remain in the API environment.
 
 Thirteen API integration checks also passed against the deployed service with the GitHub Pages origin: planning, both separate customer approvals, practice settlement, studio isolation, preflight, unrelated-origin rejection and PayPal mutation denial. The Cloudflare edge may set its own bot-management cookie; the Pages client omits credentials, the API does not set an application studio cookie, and credentialed CORS is not enabled.
