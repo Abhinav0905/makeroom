@@ -27,6 +27,13 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { seed, money, time, type Studio } from "@/lib/domain";
+import {
+  canCancelExpiredOffer,
+  canCancelOffer,
+  canCheckCancelledHold,
+  canCheckExistingPayment,
+  studioLocked,
+} from "@/lib/plan-ui";
 import StudioCalendar from "./studio-calendar";
 import PreferenceEditor from "./preference-editor";
 type Integrations = {
@@ -155,7 +162,7 @@ export default function StudioApp() {
   }, [ready]);
   const p = studio.plan;
   const viable = p && !["declined", "expired", "cancelled"].includes(p.status);
-  const locked = !!studio.operation || !!p?.orderId || !!p?.committed;
+  const locked = studioLocked(studio);
   const accepted = p?.moves.filter((m) => m.consent === "accepted").length ?? 0;
   const allAccepted = !!p && p.moves.every((m) => m.consent === "accepted");
   const disabled = !!busy || !ready;
@@ -572,10 +579,32 @@ export default function StudioApp() {
                                     : "The offer was cancelled."}
                               </strong>
                               <span>
-                                Review the terms before making another offer.
+                                {canCancelExpiredOffer(p)
+                                  ? "Cancel the PayPal checkout before making another offer."
+                                  : canCheckCancelledHold(p)
+                                    ? "Check that PayPal released the earlier hold."
+                                    : "Review the terms before making another offer."}
                               </span>
                             </div>
                           )}
+                        {p && canCancelExpiredOffer(p) && (
+                          <button
+                            className="text-button full"
+                            onClick={() => act("cancel")}
+                            disabled={disabled}
+                          >
+                            Cancel this offer
+                          </button>
+                        )}
+                        {p && canCheckCancelledHold(p) && (
+                          <button
+                            className="text-button full"
+                            onClick={() => act("reconcile")}
+                            disabled={disabled || studio.mode === "practice"}
+                          >
+                            Check existing PayPal payment
+                          </button>
+                        )}
                       </div>
                     ) : (
                       <div className="plan-details">
@@ -742,7 +771,7 @@ export default function StudioApp() {
                             </div>
                           </div>
                         )}
-                        {!p.committed && p.status !== "review" && (
+                        {canCancelOffer(p) && (
                           <button
                             className="text-button full"
                             onClick={() => act("cancel")}
@@ -751,7 +780,7 @@ export default function StudioApp() {
                             Cancel this offer
                           </button>
                         )}
-                        {p.orderId && !p.committed && (
+                        {canCheckExistingPayment(p) && (
                           <button
                             className="text-button full"
                             onClick={() => act("reconcile")}

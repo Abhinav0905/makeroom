@@ -62,6 +62,8 @@ The original calendar stays unchanged until every affected customer accepts the 
 
 Payment operations use a D1 compare-and-swap lock, durable PayPal request IDs and a separate readback of payment results. A timeout is an unknown outcome, not proof of failure. The payment check retrieves existing records before retrying refunds. An unknown refund older than five hours stops for manual review rather than risking a duplicate after PayPal's idempotency window.
 
+Each customer's refund is handled on its own, so one refused or failed refund does not hold up the others. A refund PayPal refused or reported as failed is retried once per payment check with a new request ID; a timeout keeps the same ID, and if PayPal refuses that repeat, the refund stops for manual review instead of getting a new ID. If a payment step ends in review, the payment check reads the order, authorization and capture back from PayPal and moves the offer to what PayPal shows: confirmed, still pending, authorized again or cancelled. Cancelling voids the hold with its own request ID and counts only once PayPal confirms the void.
+
 Capture and refunds are separate operations. If the charge succeeds but a refund is pending or fails, the booking remains confirmed and the UI reports outstanding settlement. Sandbox financial records cannot be reset. No live payment endpoint is present.
 
 Customer offer links are bearer capabilities: anyone holding a link can answer that single offer. They do not reveal the other customers or the studio ledger. Guest practice records are isolated from signed-in studios and cannot invoke PayPal mutations. The hosted site is public; send offer links only to the intended recipient.
@@ -75,7 +77,7 @@ npm run lint
 npm run build
 ```
 
-Tests cover planning constraints across the time grid, price and refund limits, consent expiry/refusal/replacement, payment gating, AI output validation, sandbox-only calls, idempotency keys and ambiguous provider failures. They do not prove real-world demand or model accuracy. See [verification notes](docs/VERIFICATION.md) for the observed account-backed checks.
+Tests cover planning constraints across the time grid, price and refund limits, consent expiry/refusal/replacement, payment gating, AI output validation, sandbox-only calls, idempotency keys and ambiguous provider failures. They do not prove real-world demand or model accuracy. Payment-state tests run the payment steps against a scripted PayPal sandbox: the recorded happy-path call sequence, recovery from timeouts, declines and lost redirects, voids and per-customer refunds. See [verification notes](docs/VERIFICATION.md) for the observed account-backed checks.
 
 ## Current scope
 

@@ -48,6 +48,8 @@ export type Move = {
   refundId?: string;
   refundStatus?: string;
   refundAttemptAt?: string;
+  refundError?: string;
+  previousRefundIds?: string[];
 };
 export type Plan = {
   id: string;
@@ -70,11 +72,13 @@ export type Plan = {
   orderKey: string;
   authorizeKey: string;
   captureKey: string;
+  voidKey?: string;
   orderId?: string;
   approvalUrl?: string;
   authorizationId?: string;
   captureId?: string;
   captureStatus?: string;
+  failedCaptureIds?: string[];
   committed?: boolean;
   error?: string;
   paymentAttemptAt?: string;
@@ -348,6 +352,7 @@ export function propose(
     orderKey: id(),
     authorizeKey: id(),
     captureKey: id(),
+    voidKey: id(),
   };
   s.request = { ...request };
   s.plan = p;
