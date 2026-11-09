@@ -11,6 +11,7 @@ import {
 import {
   canCancelExpiredOffer,
   canCancelOffer,
+  canCheckCancelledHold,
   canCheckExistingPayment,
   studioLocked,
 } from "../lib/plan-ui.ts";
@@ -158,4 +159,61 @@ test("review shows one PayPal check button, not two", () => {
     false,
   );
   assert.equal(canCheckExistingPayment(plan(() => {})), false);
+});
+
+test("a cancelled offer with an unconfirmed PayPal hold offers a payment check", () => {
+  const plan = (change: (p: Plan) => void) => studio(change).plan!;
+  const legacy = plan((p) => {
+    p.orderId = "ORD";
+    p.authorizationId = "AUTH";
+    p.status = "cancelled";
+    delete p.voidKey;
+  });
+  assert.equal(canCheckCancelledHold(legacy), true, "cancelled before void keys");
+  assert.equal(
+    canCheckCancelledHold(
+      plan((p) => {
+        p.orderId = "ORD";
+        p.authorizationId = "AUTH";
+        p.status = "cancelled";
+      }),
+    ),
+    false,
+    "a cancel with a void key had PayPal confirm the void",
+  );
+  assert.equal(
+    canCheckCancelledHold(
+      plan((p) => {
+        p.orderId = "ORD";
+        p.authorizationId = "AUTH";
+        p.status = "cancelled";
+        p.error = "PayPal did not confirm the void.";
+      }),
+    ),
+    true,
+    "a failed check can be repeated",
+  );
+  assert.equal(
+    canCheckCancelledHold(
+      plan((p) => {
+        p.orderId = "ORD";
+        p.status = "cancelled";
+        delete p.voidKey;
+      }),
+    ),
+    false,
+    "no hold was recorded",
+  );
+  assert.equal(
+    canCheckCancelledHold(
+      plan((p) => {
+        p.orderId = "ORD";
+        p.authorizationId = "AUTH";
+        p.status = "authorized";
+        delete p.voidKey;
+      }),
+    ),
+    false,
+    "open offers use the plan's own buttons",
+  );
 });

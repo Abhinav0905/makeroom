@@ -887,15 +887,19 @@ export function createPayments(deps: PaymentsDeps) {
         const r = await syncFromPayPal(s, save, api, false);
         if (r.kind === "held" && s.plan!.status === "cancelled") {
           // A cancelled offer whose hold PayPal still shows: finish the void.
+          // Offers cancelled before void keys existed, or whose earlier check
+          // failed, reach this from "Check existing PayPal payment" on the
+          // closed offer (canCheckCancelledHold in lib/plan-ui.ts).
           await voidHold(s, r.authorizationId, save, api);
-          await save((s) =>
+          await save((s) => {
+            delete s.plan!.error;
             event(
               s,
               "Authorization voided",
               "PayPal confirmed the hold for this cancelled offer was released.",
               "payment",
-            ),
-          );
+            );
+          });
         }
       },
       true,

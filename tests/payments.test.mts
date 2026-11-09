@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { PayPal, PayPalError, type PayPalResource } from "../lib/paypal.ts";
 import { createPayments } from "../lib/payments-core.ts";
+import { canCheckCancelledHold } from "../lib/plan-ui.ts";
 import {
   assertEditable,
   commit,
@@ -351,6 +352,73 @@ test("C1: cancel without a PayPal checkout makes no PayPal call", async () => {
   const s = await payments.cancelCheckout(OWNER);
   assert.equal(s.plan!.status, "cancelled");
   assert.equal(fake.calls.length, 0);
+});
+
+test("C3: reconcile finishes the void for an offer cancelled before void keys existed", async () => {
+  const { fake, payments, studio } = setup((s) => {
+    authorized(s);
+    s.plan!.status = "cancelled";
+    delete s.plan!.voidKey;
+  });
+  assert.equal(canCheckCancelledHold(studio().plan!), true);
+  fake.on(GET_ORDER, ok(ORDER_AUTH("CREATED"))).on(VOID, ok(VOIDED));
+  const s = await payments.reconcile(OWNER);
+  const p = s.plan!;
+  assert.equal(p.status, "cancelled", "the offer is not revived");
+  assert.ok(p.voidKey);
+  assert.deepEqual(fake.routes(), [GET_ORDER, VOID]);
+  assert.equal(fake.to(VOID)[0].key, p.voidKey);
+  assert.notEqual(p.voidKey, p.authorizeKey);
+  assert.ok(s.events.some((e) => e.title === "Authorization voided"));
+  assert.equal(canCheckCancelledHold(p), false);
+  assert.deepEqual(starts(s), [840, 900]);
+  assert.doesNotThrow(() => assertEditable(s));
+  done(fake);
+});
+
+test("C3: a failed legacy void stays checkable and a retry reuses the void key", async () => {
+  const { fake, payments, studio } = setup((s) => {
+    authorized(s);
+    s.plan!.status = "cancelled";
+    delete s.plan!.voidKey;
+  });
+  fake
+    .on(GET_ORDER, ok(ORDER_AUTH("CREATED")))
+    .on(VOID, ok({ id: "AUTH", status: "CREATED" }));
+  await assert.rejects(
+    payments.reconcile(OWNER),
+    /PayPal did not confirm the void/,
+  );
+  let p = studio().plan!;
+  assert.equal(p.status, "cancelled");
+  assert.match(p.error ?? "", /did not confirm the void/);
+  assert.equal(canCheckCancelledHold(p), true, "the check stays available");
+
+  fake.on(GET_ORDER, ok(ORDER_AUTH("CREATED"))).on(VOID, ok(VOIDED));
+  p = (await payments.reconcile(OWNER)).plan!;
+  assert.equal(p.status, "cancelled");
+  assert.equal(p.error, undefined);
+  assert.equal(canCheckCancelledHold(p), false);
+  assert.deepEqual(
+    fake.to(VOID).map((c) => c.key),
+    [p.voidKey, p.voidKey],
+  );
+  done(fake);
+});
+
+test("C3: a legacy cancelled offer PayPal shows as voided is only confirmed", async () => {
+  const { fake, payments } = setup((s) => {
+    authorized(s);
+    s.plan!.status = "cancelled";
+    delete s.plan!.voidKey;
+  });
+  fake.on(GET_ORDER, ok(ORDER_AUTH("VOIDED")));
+  const s = await payments.reconcile(OWNER);
+  assert.equal(s.plan!.status, "cancelled");
+  assert.equal(fake.to(VOID).length, 0);
+  assert.ok(s.events.some((e) => e.title === "No payment is held"));
+  assert.equal(canCheckCancelledHold(s.plan!), false);
+  done(fake);
 });
 
 test("R5: authorize fails on the PayPal return; reconcile authorizes with the same key", async () => {

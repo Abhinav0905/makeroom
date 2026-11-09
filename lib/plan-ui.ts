@@ -27,3 +27,16 @@ export function canCancelExpiredOffer(p: Plan) {
 export function canCheckExistingPayment(p: Plan) {
   return !!p.orderId && !p.committed && p.status !== "review";
 }
+/**
+ * A cancelled offer that recorded a PayPal hold without a confirmed void:
+ * cancelled before this studio kept a void key (older records), or a later
+ * check of it failed. The check reads PayPal and voids any hold still there.
+ */
+export function canCheckCancelledHold(p: Plan) {
+  return (
+    p.status === "cancelled" &&
+    !!p.orderId &&
+    !!p.authorizationId &&
+    (!p.voidKey || !!p.error)
+  );
+}

@@ -30,6 +30,7 @@ import { seed, money, time, type Studio } from "@/lib/domain";
 import {
   canCancelExpiredOffer,
   canCancelOffer,
+  canCheckCancelledHold,
   canCheckExistingPayment,
   studioLocked,
 } from "@/lib/plan-ui";
@@ -580,7 +581,9 @@ export default function StudioApp() {
                               <span>
                                 {canCancelExpiredOffer(p)
                                   ? "Cancel the PayPal checkout before making another offer."
-                                  : "Review the terms before making another offer."}
+                                  : canCheckCancelledHold(p)
+                                    ? "Check that PayPal released the earlier hold."
+                                    : "Review the terms before making another offer."}
                               </span>
                             </div>
                           )}
@@ -591,6 +594,15 @@ export default function StudioApp() {
                             disabled={disabled}
                           >
                             Cancel this offer
+                          </button>
+                        )}
+                        {p && canCheckCancelledHold(p) && (
+                          <button
+                            className="text-button full"
+                            onClick={() => act("reconcile")}
+                            disabled={disabled || studio.mode === "practice"}
+                          >
+                            Check existing PayPal payment
                           </button>
                         )}
                       </div>
