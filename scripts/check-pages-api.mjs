@@ -19,7 +19,10 @@ const start = await api();
 assert.equal(start.r.status, 200);
 assert.equal(start.b.integrations.guest, true);
 assert.equal(start.r.headers.get("Access-Control-Allow-Origin"), origin);
-assert.equal(start.r.headers.has("set-cookie"), false); checks++;
+// The hosting edge may add its own bot-management cookie. The application
+// must not create a studio cookie or permit browsers to send credentials.
+assert.equal(start.r.headers.getSetCookie().some((x) => x.startsWith("makeroom_practice=")), false);
+assert.equal(start.r.headers.has("Access-Control-Allow-Credentials"), false); checks++;
 const plan = await api("/api/studio", { action: "plan", version: start.b.studio.version, request: start.b.studio.request });
 assert.equal(plan.r.status, 200); assert.equal(plan.b.studio.plan.moves.length, 2); checks++;
 for (const move of plan.b.studio.plan.moves) {

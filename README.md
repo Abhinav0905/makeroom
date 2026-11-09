@@ -14,6 +14,8 @@ Choose **Customers**, read Alex's message with AI and review/save the result. Re
 
 The [sandbox evidence page](https://abhinav0905.github.io/makeroom/?view=proof) shows the completed account-backed PayPal run. Run locally with your own PayPal test accounts for a new sandbox run.
 
+[Watch the public demo video](https://youtu.be/UNQo09sKdJU) (2 minutes 19 seconds). It includes the actual app workflow and the completed PayPal sandbox record.
+
 ## Run locally
 
 Use Node 22.18+ or Node 24+. Clone this repository and install dependencies with `npm ci`. Practice mode works without keys. To test the AI and PayPal integrations, create an ignored `.dev.vars` file:

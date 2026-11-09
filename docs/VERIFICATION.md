@@ -47,3 +47,5 @@ No real studio has validated demand. No external customer pilot, real-money chec
 ## GitHub Pages frontend
 
 The public React app is also built as static files for GitHub Pages. Twenty-three automated tests pass, including three tests for the Pages origin allowlist, practice-only identity namespace and absence of credentialed CORS. Server secrets remain in the API environment.
+
+Thirteen API integration checks also passed against the deployed service with the GitHub Pages origin: planning, both separate customer approvals, practice settlement, studio isolation, preflight, unrelated-origin rejection and PayPal mutation denial. The Cloudflare edge may set its own bot-management cookie; the Pages client omits credentials, the API does not set an application studio cookie, and credentialed CORS is not enabled.
