@@ -14,7 +14,7 @@ Choose **Customers** and read Alex's message with AI. (If Alex's message is a si
 
 The [sandbox evidence page](https://abhinav0905.github.io/makeroom/?view=proof) shows the completed account-backed PayPal run. Run locally with your own PayPal test accounts for a new sandbox run.
 
-[Watch the public demo video](https://youtu.be/yYuYDVw0iVs) (2 minutes 48 seconds). It starts with what MakeRoom does, then shows the app workflow, PayPal's own sandbox API logs and both completed refund responses. See [the matching PayPal records and IDs](docs/PAYPAL-EVIDENCE.md).
+[Watch the public demo video](https://youtu.be/eaCp66J_7ag) (2 minutes 11 seconds). It shows the AI reading a messy customer reply, the planner, both customer approvals and a PayPal sandbox checkout on camera, then PayPal's own records of the capture and refunds. See [the matching PayPal records and IDs](docs/PAYPAL-EVIDENCE.md).
 
 ## Run locally
 
