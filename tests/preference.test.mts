@@ -350,8 +350,68 @@ test("the reader explains which check failed without leaking the key", async () 
   );
   await assert.rejects(
     run((async () => {
-      throw new Error("network down secret-key");
+      throw new TypeError("fetch failed: getaddrinfo ENOTFOUND secret-key");
     }) as typeof fetch),
-    notSecret(/did not respond/),
+    (e: unknown) =>
+      notSecret(/could not be reached/)(e) &&
+      !/in time|ENOTFOUND|fetch failed/.test((e as Error).message),
+  );
+});
+test("timeouts, unreadable bodies and odd replies get plain messages", async () => {
+  const key = "secret-key";
+  const run = (send: typeof fetch) =>
+    readPreference(key, "gemini-2.5-flash", message, 60, 6000, 840, send);
+  const timeout = () =>
+    new DOMException(
+      "The operation was aborted due to timeout",
+      "TimeoutError",
+    );
+  const raw =
+    /aborted|Unexpected token|SyntaxError|JSON at position|TypeError|Cannot read/;
+  const plain = (pattern: RegExp) => (e: unknown) =>
+    e instanceof Error &&
+    pattern.test(e.message) &&
+    !e.message.includes(key) &&
+    !raw.test(e.message);
+  await assert.rejects(
+    run((async () => {
+      throw timeout();
+    }) as typeof fetch),
+    plain(/did not respond in time/),
+  );
+  const brokenBody = (error: unknown) =>
+    (async () =>
+      new Response(
+        new ReadableStream({
+          start(c) {
+            c.enqueue(new TextEncoder().encode('{"candidates": ['));
+            c.error(error);
+          },
+        }),
+      )) as typeof fetch;
+  await assert.rejects(
+    run(brokenBody(timeout())),
+    plain(/started replying but did not finish in time/),
+  );
+  await assert.rejects(
+    run(brokenBody(new TypeError("terminated secret-key"))),
+    plain(/connection to the AI provider dropped/),
+  );
+  for (const body of ["<html>Bad gateway</html>", "", "null", "[1]", '"text"'])
+    await assert.rejects(
+      run((async () => new Response(body, { status: 200 })) as typeof fetch),
+      plain(/unexpected format/),
+      body,
+    );
+  await assert.rejects(
+    run(
+      (async () =>
+        new Response(
+          JSON.stringify({
+            candidates: [{ finishReason: "STOP", content: { parts: 7 } }],
+          }),
+        )) as typeof fetch,
+    ),
+    plain(/not valid JSON/),
   );
 });

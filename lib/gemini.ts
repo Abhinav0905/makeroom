@@ -7,6 +7,19 @@ type GeminiReply = {
   promptFeedback?: { blockReason?: string };
 };
 const unchanged = "Your current terms are unchanged.";
+/** A failure whose message is plain, contains no secret and is safe to show to the studio owner. */
+export class ReadError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ReadError";
+  }
+}
+/** AbortSignal.timeout rejects with a TimeoutError; some runtimes report an AbortError. */
+const timedOut = (e: unknown) =>
+  typeof e === "object" &&
+  e !== null &&
+  "name" in e &&
+  (e.name === "TimeoutError" || e.name === "AbortError");
 export async function readPreference(
   key: string,
   model: string,
@@ -16,8 +29,27 @@ export async function readPreference(
   current: number,
   send: typeof fetch = fetch,
 ) {
+  try {
+    return await read(key, model, message, duration, remaining, current, send);
+  } catch (e) {
+    if (e instanceof ReadError) throw e;
+    // Never pass raw runtime or parser text to the owner.
+    throw new ReadError(
+      `The AI step failed for an unexpected reason. ${unchanged} Enter the terms manually or try again.`,
+    );
+  }
+}
+async function read(
+  key: string,
+  model: string,
+  message: string,
+  duration: number,
+  remaining: number,
+  current: number,
+  send: typeof fetch,
+) {
   if (!/^[a-zA-Z0-9.-]+$/.test(model))
-    throw new Error("Invalid AI model configuration.");
+    throw new ReadError("Invalid AI model configuration.");
   let res: Response;
   try {
     res = await send(
@@ -72,40 +104,66 @@ export async function readPreference(
         }),
       },
     );
-  } catch {
-    throw new Error(`The AI provider did not respond in time. ${unchanged}`);
+  } catch (e) {
+    throw new ReadError(
+      timedOut(e)
+        ? `The AI provider did not respond in time. ${unchanged}`
+        : `The AI provider could not be reached. Check the network connection and try again. ${unchanged}`,
+    );
   }
   if (!res.ok)
-    throw new Error(
+    throw new ReadError(
       `The AI provider could not read this message (HTTP ${res.status}). ${unchanged}`,
     );
-  const body = (await res.json()) as GeminiReply;
-  const candidate = body.candidates?.[0];
+  let raw: string;
+  try {
+    raw = await res.text();
+  } catch (e) {
+    throw new ReadError(
+      timedOut(e)
+        ? `The AI provider started replying but did not finish in time. ${unchanged}`
+        : `The connection to the AI provider dropped while its reply was arriving. ${unchanged}`,
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    parsed = undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+    throw new ReadError(
+      `The AI provider sent a reply in an unexpected format. ${unchanged} Try again in a moment.`,
+    );
+  const body = parsed as GeminiReply;
+  const candidate = Array.isArray(body.candidates)
+    ? body.candidates[0]
+    : undefined;
   if (!candidate)
-    throw new Error(
+    throw new ReadError(
       body.promptFeedback?.blockReason
         ? "The AI provider declined to read this message. Enter the terms manually."
         : `The AI provider returned no answer. ${unchanged}`,
     );
   const reason = candidate.finishReason;
   if (reason === "MAX_TOKENS")
-    throw new Error(
+    throw new ReadError(
       "The AI reply was cut off before it finished. Try a shorter message or enter the terms manually.",
     );
   if (reason && reason !== "STOP")
-    throw new Error(
+    throw new ReadError(
       `The AI provider stopped early${/^[A-Z_]{1,40}$/.test(reason) ? ` (${reason})` : ""}. Enter the terms manually.`,
     );
-  const text =
-    candidate.content?.parts
-      ?.filter((p) => !p.thought)
-      .map((p) => p.text || "")
-      .join("") || "";
+  const parts = candidate.content?.parts;
+  const text = (Array.isArray(parts) ? parts : [])
+    .filter((p) => p && !p.thought)
+    .map((p) => (typeof p.text === "string" ? p.text : ""))
+    .join("");
   let value: unknown;
   try {
     value = JSON.parse(text);
   } catch {
-    throw new Error(
+    throw new ReadError(
       "The AI reply was not valid JSON. Enter the terms manually or try again.",
     );
   }
@@ -115,7 +173,7 @@ export async function readPreference(
       model,
     };
   } catch (e) {
-    throw new Error(
+    throw new ReadError(
       e instanceof DraftError
         ? `The AI response did not pass the studio's checks. ${e.message} Enter the terms manually or try a clearer message.`
         : "The AI response did not pass the studio's checks. Enter the terms manually or try a clearer message.",
