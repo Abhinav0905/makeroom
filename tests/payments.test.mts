@@ -301,6 +301,58 @@ test("R4: cancel from review is refused when PayPal shows a completed capture", 
   done(fake);
 });
 
+// Cancels
+
+for (const status of ["proposed", "expired"] as const)
+  test(`C1: cancel of a ${status} checkout voids a hold PayPal has that the studio did not record`, async () => {
+    const { fake, payments } = setup((s) => {
+      withOrder(s);
+      s.plan!.status = status;
+    });
+    fake.on(GET_ORDER, ok(ORDER_AUTH("CREATED"))).on(VOID, ok(VOIDED));
+    const s = await payments.cancelCheckout(OWNER);
+    assert.equal(s.plan!.status, "cancelled");
+    assert.equal(s.plan!.authorizationId, "AUTH");
+    assert.equal(s.plan!.error, undefined);
+    assert.deepEqual(fake.routes(), [GET_ORDER, VOID]);
+    assert.equal(fake.to(VOID)[0].key, s.plan!.voidKey);
+    assert.deepEqual(starts(s), [840, 900]);
+    assert.doesNotThrow(() => assertEditable(s));
+    done(fake);
+  });
+
+test("C1: cancel of an open checkout the buyer never approved needs no void", async () => {
+  const { fake, payments } = setup(withOrder);
+  fake.on(GET_ORDER, ok(ORDER_PAYER));
+  const s = await payments.cancelCheckout(OWNER);
+  assert.equal(s.plan!.status, "cancelled");
+  assert.equal(s.plan!.approvalUrl, undefined);
+  assert.deepEqual(fake.routes(), [GET_ORDER]);
+  assert.doesNotThrow(() => assertEditable(s));
+  done(fake);
+});
+
+test("C1: cancel of an open checkout is refused while PayPal reviews an unrecorded authorization", async () => {
+  const { fake, payments, studio } = setup(withOrder);
+  fake.on(GET_ORDER, ok(ORDER_AUTH("PENDING")));
+  await assert.rejects(
+    payments.cancelCheckout(OWNER),
+    /still reviewing this authorization; it was not cancelled/,
+  );
+  const s = studio();
+  assert.equal(s.plan!.status, "proposed");
+  assert.equal(fake.to(VOID).length, 0);
+  assert.throws(() => assertEditable(s), /Finish or cancel/);
+  done(fake);
+});
+
+test("C1: cancel without a PayPal checkout makes no PayPal call", async () => {
+  const { fake, payments } = setup();
+  const s = await payments.cancelCheckout(OWNER);
+  assert.equal(s.plan!.status, "cancelled");
+  assert.equal(fake.calls.length, 0);
+});
+
 test("R5: authorize fails on the PayPal return; reconcile authorizes with the same key", async () => {
   const { fake, payments, studio } = setup(withOrder);
   fake

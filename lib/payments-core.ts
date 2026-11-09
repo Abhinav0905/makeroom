@@ -546,9 +546,9 @@ export function createPayments(deps: PaymentsDeps) {
     await refundMoves(updated, save, api);
   }
   // Read the plan's payment from PayPal and move the plan to the state PayPal
-  // proves. Used by reconcile, and by cancel from review (cancelling = true),
-  // which must never create an authorization and leaves the final save to the
-  // cancel itself.
+  // proves. Used by reconcile, and by cancel (cancelling = true) when a hold
+  // may exist that the studio has not recorded; cancel must never create an
+  // authorization and leaves the final save to the cancel itself.
   async function syncFromPayPal(
     s: Studio,
     save: Save,
@@ -918,8 +918,11 @@ export function createPayments(deps: PaymentsDeps) {
       async (s, save, api) => {
         const p = s.plan!;
         let hold = p.authorizationId;
-        if (p.status === "review" && p.orderId) {
-          // Cancel from review only after PayPal proves nothing was captured.
+        // Read PayPal first whenever it could hold money this studio has not
+        // recorded: after review, or when an authorize result was never saved
+        // (a failed save, an amount mismatch or a pending authorization).
+        if (p.orderId && (p.status === "review" || !hold)) {
+          // Cancel only after PayPal proves nothing was captured.
           const r = await syncFromPayPal(s, save, api, true);
           if (r.kind === "captured" || r.kind === "pending")
             throw new DomainError(
