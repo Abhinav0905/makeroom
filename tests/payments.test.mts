@@ -302,6 +302,23 @@ test("R4: cancel from review is refused when PayPal shows a completed capture", 
   done(fake);
 });
 
+test("R4: cancel from review is refused while PayPal is still reviewing the authorization", async () => {
+  const { fake, payments, studio } = setup((s) => {
+    withOrder(s);
+    s.plan!.status = "review";
+  });
+  fake.on(GET_ORDER, ok(ORDER_AUTH("PENDING")));
+  await assert.rejects(
+    payments.cancelCheckout(OWNER),
+    /still reviewing this authorization; it was not cancelled/,
+  );
+  const s = studio();
+  assert.equal(s.plan!.status, "review");
+  assert.equal(s.plan!.authorizationId, undefined);
+  assert.equal(fake.to(VOID).length, 0);
+  done(fake);
+});
+
 // Cancels
 
 for (const status of ["proposed", "expired"] as const)
@@ -353,6 +370,21 @@ test("C1: cancel without a PayPal checkout makes no PayPal call", async () => {
   assert.equal(s.plan!.status, "cancelled");
   assert.equal(fake.calls.length, 0);
 });
+
+for (const status of ["declined", "cancelled"] as const)
+  test(`C2: a ${status} offer is refused as already closed without calling PayPal`, async () => {
+    const { fake, payments, studio } = setup((s) => {
+      withOrder(s);
+      s.plan!.status = status;
+    });
+    await assert.rejects(
+      payments.cancelCheckout(OWNER),
+      /This offer is already closed\./,
+    );
+    assert.equal(studio().plan!.status, status);
+    assert.equal(studio().plan!.error, undefined);
+    assert.equal(fake.calls.length + fake.tokens, 0);
+  });
 
 test("C3: reconcile finishes the void for an offer cancelled before void keys existed", async () => {
   const { fake, payments, studio } = setup((s) => {
@@ -639,6 +671,115 @@ test("R10: a funding capture failure leaves the plan untouched", async () => {
   assert.ok(s.events.some((e) => e.title === "Payment needs attention"));
   done(fake);
 });
+
+test("R11: an authorization PayPal shows as captured without a readable capture stays in review", async () => {
+  const { fake, payments, studio } = setup(authorized);
+  fake.on(CAPTURE, TIMEOUT);
+  await assert.rejects(payments.captureAndSettle(OWNER), uncertain);
+
+  fake.on(GET_ORDER, ok(ORDER_AUTH("CAPTURED")));
+  await assert.rejects(
+    payments.reconcile(OWNER),
+    /captured, but the capture could not be read/,
+  );
+  const s = studio();
+  assert.equal(s.plan!.status, "review");
+  assert.ok(!s.plan!.committed);
+  assert.match(s.plan!.error ?? "", /could not be read/);
+  assert.deepEqual(starts(s), [840, 900]);
+  assert.equal(fake.to(CAPTURE).length, 1, "no second capture");
+  assert.equal(fake.to(VOID).length, 0);
+  done(fake);
+});
+
+test("R12: reconcile leaves a pending authorization alone and does not authorize again", async () => {
+  const { fake, payments } = setup((s) => {
+    withOrder(s);
+    s.plan!.status = "review";
+  });
+  fake.on(GET_ORDER, ok(ORDER_AUTH("PENDING")));
+  const s = await payments.reconcile(OWNER);
+  assert.equal(s.plan!.status, "review");
+  assert.equal(s.plan!.authorizationId, undefined);
+  assert.ok(s.events.some((e) => e.title === "Authorization pending"));
+  assert.equal(fake.to(AUTHORIZE).length, 0);
+  done(fake);
+});
+
+test("R13: an order PayPal no longer has releases a plan with nothing recorded", async () => {
+  const { fake, payments } = setup((s) => {
+    withOrder(s);
+    s.plan!.status = "review";
+  });
+  fake.on(GET_ORDER, err(404, "RESOURCE_NOT_FOUND"));
+  const s = await payments.reconcile(OWNER);
+  assert.equal(s.plan!.status, "cancelled");
+  assert.equal(s.plan!.approvalUrl, undefined);
+  assert.ok(
+    s.events.some((e) => /PayPal has no record of this checkout/.test(e.detail)),
+  );
+  assert.doesNotThrow(() => assertEditable(s));
+  done(fake);
+});
+
+test("R13: an order 404 is not trusted once a hold was recorded", async () => {
+  const { fake, payments, studio } = setup(authorized);
+  fake.on(GET_ORDER, err(404, "RESOURCE_NOT_FOUND"));
+  await assert.rejects(payments.reconcile(OWNER), /RESOURCE_NOT_FOUND/);
+  assert.equal(studio().plan!.status, "authorized");
+  done(fake);
+});
+
+test("R14: a confirmed booking whose capture is no longer completed stops refunds", async () => {
+  const { fake, payments, studio } = setup(committed);
+  fake.on(GET_CAP, ok(CAP("REFUNDED")));
+  await assert.rejects(
+    payments.reconcile(OWNER),
+    /now reports this payment as refunded/,
+  );
+  const s = studio();
+  assert.equal(s.plan!.committed, true);
+  assert.equal(s.plan!.status, "settling");
+  assert.match(s.plan!.error ?? "", /refunded/);
+  assert.ok(!fake.routes().some((r) => r.endsWith("/refund")));
+  assert.deepEqual(refunded(s), [0, 0]);
+  done(fake);
+});
+
+for (const [label, shape, message] of [
+  [
+    "a plan in review",
+    (s: Studio) => {
+      withOrder(s);
+      s.plan!.status = "review";
+    },
+    /This payment needs a check first\. Use Check payment\./,
+  ],
+  [
+    "an expired offer",
+    (s: Studio) => {
+      withOrder(s);
+      s.plan!.status = "expired";
+    },
+    /This offer expired before payment was authorized; cancel it\./,
+  ],
+  [
+    "an offer past its expiry time",
+    (s: Studio) => {
+      withOrder(s);
+      s.plan!.expiresAt = new Date(Date.now() - 60_000).toISOString();
+    },
+    /This offer expired before payment was authorized; cancel it\./,
+  ],
+] as const)
+  test(`A1: the PayPal return for ${label} is refused without calling PayPal`, async () => {
+    const { fake, payments, studio } = setup(shape);
+    const before = studio().plan!.status;
+    await assert.rejects(payments.finishApproval(OWNER, "ORD"), message);
+    assert.equal(studio().plan!.status, before);
+    assert.equal(studio().plan!.authorizationId, undefined);
+    assert.equal(fake.calls.length + fake.tokens, 0);
+  });
 
 // Voids
 
