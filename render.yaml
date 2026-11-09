@@ -1,0 +1,20 @@
+# Render Blueprint for the public MakeRoom practice demo.
+# One web service serves the app, the API and a local D1 database through
+# Wrangler's local runtime (see scripts/render-start.mjs). Practice payments
+# only: no PayPal keys are set here and sign-in is off.
+services:
+  - type: web
+    name: makeroom
+    runtime: node
+    plan: free
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm run start:render
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      # Optional: enables the "Read with AI" step.
+      - key: GEMINI_API_KEY
+        sync: false
