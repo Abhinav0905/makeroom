@@ -1,0 +1,71 @@
+{
+  "verifiedAt": "2026-11-09T04:42:42.364307+00:00",
+  "environment": "PayPal sandbox",
+  "requests": [
+    {
+      "label": "Maya payment",
+      "method": "GET",
+      "url": "https://api-m.sandbox.paypal.com/v2/payments/captures/0RW62522V6579041A",
+      "httpStatus": 200,
+      "paypalDebugId": "ca57a26ff8d35",
+      "id": "0RW62522V6579041A",
+      "status": "COMPLETED",
+      "amount": {
+        "currency_code": "USD",
+        "value": "145.00"
+      }
+    },
+    {
+      "label": "Alex original payment",
+      "method": "GET",
+      "url": "https://api-m.sandbox.paypal.com/v2/payments/captures/4CH15419F3477864R",
+      "httpStatus": 200,
+      "paypalDebugId": "ca57a27027f36",
+      "id": "4CH15419F3477864R",
+      "status": "PARTIALLY_REFUNDED",
+      "amount": {
+        "currency_code": "USD",
+        "value": "60.00"
+      }
+    },
+    {
+      "label": "Sam original payment",
+      "method": "GET",
+      "url": "https://api-m.sandbox.paypal.com/v2/payments/captures/50W05713CV672214S",
+      "httpStatus": 200,
+      "paypalDebugId": "ca57a2704b8c1",
+      "id": "50W05713CV672214S",
+      "status": "PARTIALLY_REFUNDED",
+      "amount": {
+        "currency_code": "USD",
+        "value": "60.00"
+      }
+    },
+    {
+      "label": "Alex refund",
+      "method": "GET",
+      "url": "https://api-m.sandbox.paypal.com/v2/payments/refunds/17V66495EX001863A",
+      "httpStatus": 200,
+      "paypalDebugId": "ca57a27078a65",
+      "id": "17V66495EX001863A",
+      "status": "COMPLETED",
+      "amount": {
+        "currency_code": "USD",
+        "value": "15.00"
+      }
+    },
+    {
+      "label": "Sam refund",
+      "method": "GET",
+      "url": "https://api-m.sandbox.paypal.com/v2/payments/refunds/6XF75371XW100903J",
+      "httpStatus": 200,
+      "paypalDebugId": "ca57a270a2c2e",
+      "id": "6XF75371XW100903J",
+      "status": "COMPLETED",
+      "amount": {
+        "currency_code": "USD",
+        "value": "10.00"
+      }
+    }
+  ]
+}
