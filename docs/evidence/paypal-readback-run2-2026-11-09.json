@@ -1,0 +1,74 @@
+{
+  "note": "Second MakeRoom PayPal sandbox run, recorded for the demo video on November 9, 2026. Fictional customers paid as PayPal guest checkouts with a published sandbox test card. GET readbacks only; credentials and buyer details are excluded. No live money moved.",
+  "readAt": "2026-11-09T20:56:06.607Z",
+  "environment": "sandbox",
+  "reads": [
+    {
+      "what": "Maya's order",
+      "request": "GET /v2/checkout/orders/3SE28460TW205160U",
+      "httpStatus": 200,
+      "id": "3SE28460TW205160U",
+      "status": "COMPLETED",
+      "amount": {
+        "currency_code": "USD",
+        "value": "145.00"
+      },
+      "intent": "AUTHORIZE"
+    },
+    {
+      "what": "Maya's capture",
+      "request": "GET /v2/payments/captures/8HA81230165383331",
+      "httpStatus": 200,
+      "id": "8HA81230165383331",
+      "status": "COMPLETED",
+      "amount": {
+        "currency_code": "USD",
+        "value": "145.00"
+      }
+    },
+    {
+      "what": "Alex's refund",
+      "request": "GET /v2/payments/refunds/2M789313EJ2559441",
+      "httpStatus": 200,
+      "id": "2M789313EJ2559441",
+      "status": "COMPLETED",
+      "amount": {
+        "currency_code": "USD",
+        "value": "15.00"
+      }
+    },
+    {
+      "what": "Sam's refund",
+      "request": "GET /v2/payments/refunds/7G359565H3880444P",
+      "httpStatus": 200,
+      "id": "7G359565H3880444P",
+      "status": "COMPLETED",
+      "amount": {
+        "currency_code": "USD",
+        "value": "10.00"
+      }
+    },
+    {
+      "what": "Alex's original capture",
+      "request": "GET /v2/payments/captures/71Y081377T278070C",
+      "httpStatus": 200,
+      "id": "71Y081377T278070C",
+      "status": "PARTIALLY_REFUNDED",
+      "amount": {
+        "currency_code": "USD",
+        "value": "60.00"
+      }
+    },
+    {
+      "what": "Sam's original capture",
+      "request": "GET /v2/payments/captures/6MC46836RT877864B",
+      "httpStatus": 200,
+      "id": "6MC46836RT877864B",
+      "status": "PARTIALLY_REFUNDED",
+      "amount": {
+        "currency_code": "USD",
+        "value": "60.00"
+      }
+    }
+  ]
+}
