@@ -114,6 +114,7 @@ export default function StudioApp() {
       };
       if (!res.ok) {
         await refresh();
+        if (action === "plan") setRequest(request);
         throw Error(d.error || "Request failed.");
       }
       setStudio(d.studio);
