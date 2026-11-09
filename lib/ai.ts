@@ -15,6 +15,7 @@ export async function interpret(message: string, b: Booking) {
       message,
       b.duration,
       b.prepaid - b.refunded,
+      b.start,
     );
   } catch (e) {
     throw new DomainError(
