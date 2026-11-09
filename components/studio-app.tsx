@@ -43,6 +43,7 @@ type Integrations = {
   aiProvider: string | null;
   aiModel: string;
   webhooks: boolean;
+  signIn?: boolean;
 };
 type View = "studio" | "customers" | "activity" | "settings";
 const defaults: Integrations = {
@@ -327,7 +328,7 @@ export default function StudioApp() {
               then complete the simulated booking. No sign-in needed.
             </div>
           )}
-          {login && (
+          {login && integrations.signIn !== false && (
             <div className="login-banner">
               <div>
                 <strong>Your studio is ready to open.</strong>
@@ -980,7 +981,7 @@ export default function StudioApp() {
                   {integrations.guest && (
                     <p>
                       Guest payments are simulated.{" "}
-                      {!staticRuntime() && <><a
+                      {!staticRuntime() && integrations.signIn !== false && <><a
                         href={appHref("/signin-with-chatgpt?return_to=%2F")}
                         target="_top"
                       >
