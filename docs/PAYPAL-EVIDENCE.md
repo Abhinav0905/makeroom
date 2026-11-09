@@ -32,6 +32,9 @@ The updated code ran the same flow again in a fresh local workspace, with no lin
 | Result | PayPal ID | Amount | Readback status |
 | --- | --- | --- | --- |
 | Maya's order (AUTHORIZE) | `3SE28460TW205160U` | USD 145.00 | `COMPLETED` |
+| Maya's authorization | `82D36576RX811684U` | USD 145.00 | `CAPTURED` |
+| Alex's prepayment order | `9N578580M0741814N` | USD 60.00 | `COMPLETED` |
+| Sam's prepayment order | `0VH43137UH1259405` | USD 60.00 | `COMPLETED` |
 | Maya's capture | `8HA81230165383331` | USD 145.00 | `COMPLETED` |
 | Alex's original capture | `71Y081377T278070C` | USD 60.00 | `PARTIALLY_REFUNDED` |
 | Sam's original capture | `6MC46836RT877864B` | USD 60.00 | `PARTIALLY_REFUNDED` |
@@ -40,4 +43,4 @@ The updated code ran the same flow again in a fresh local workspace, with no lin
 
 [The second readback record](evidence/paypal-readback-run2-2026-11-09.json) has the GET requests and HTTP statuses, without credentials or buyer details.
 
-The customers and studio are fictional. One sandbox buyer represented all three customers. No live money moved. The public practice demo simulates payments; use the [local setup](../README.md) and your own PayPal sandbox accounts to run a new payment flow.
+The customers and studio are fictional. In the November 8 run, one sandbox buyer account represented all three customers; in the November 9 run, each paid as a guest checkout with a published sandbox test card. No live money moved. The public practice demo simulates payments; use the [local setup](../README.md) and your own PayPal sandbox accounts to run a new payment flow.

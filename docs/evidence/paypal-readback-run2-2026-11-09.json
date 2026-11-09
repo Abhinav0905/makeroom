@@ -69,6 +69,41 @@
         "currency_code": "USD",
         "value": "60.00"
       }
+    },
+    {
+      "what": "Maya's authorization",
+      "request": "GET /v2/payments/authorizations/82D36576RX811684U",
+      "httpStatus": 200,
+      "id": "82D36576RX811684U",
+      "status": "CAPTURED",
+      "amount": {
+        "currency_code": "USD",
+        "value": "145.00"
+      }
+    },
+    {
+      "what": "Alex's prepayment order",
+      "request": "GET /v2/checkout/orders/9N578580M0741814N",
+      "httpStatus": 200,
+      "id": "9N578580M0741814N",
+      "status": "COMPLETED",
+      "amount": {
+        "currency_code": "USD",
+        "value": "60.00"
+      },
+      "intent": "CAPTURE"
+    },
+    {
+      "what": "Sam's prepayment order",
+      "request": "GET /v2/checkout/orders/0VH43137UH1259405",
+      "httpStatus": 200,
+      "id": "0VH43137UH1259405",
+      "status": "COMPLETED",
+      "amount": {
+        "currency_code": "USD",
+        "value": "60.00"
+      },
+      "intent": "CAPTURE"
     }
   ]
 }
