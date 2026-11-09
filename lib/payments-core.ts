@@ -126,7 +126,10 @@ export function createPayments(deps: PaymentsDeps) {
     } catch (e) {
       await save((s) => {
         const p = s.plan;
-        if (p && !FUNDING_KINDS.includes(kind)) {
+        // A complete plan has nothing left to fix, so a refused step (Cancel
+        // after PayPal had already taken the payment) is logged below but not
+        // left on the plan, where no button could clear it.
+        if (p && !FUNDING_KINDS.includes(kind) && p.status !== "complete") {
           p.error =
             e instanceof Error ? e.message : "Payment step needs review.";
           // Review means "PayPal may hold or have moved money for this plan".

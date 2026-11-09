@@ -292,7 +292,12 @@ test("R4: cancel from review is refused when PayPal shows a completed capture", 
   const s = studio();
   assert.equal(s.plan!.committed, true, "the captured payment is honoured");
   assert.equal(s.plan!.status, "complete");
+  assert.equal(s.plan!.error, undefined, "a complete plan keeps no error box");
   assert.deepEqual(refunded(s), [1500, 1000]);
+  assert.ok(
+    s.events.some((e) => /it was not cancelled/.test(e.detail)),
+    "the refused cancel is still logged",
+  );
   done(fake);
 });
 
