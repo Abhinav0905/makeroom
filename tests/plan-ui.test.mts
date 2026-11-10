@@ -13,6 +13,7 @@ import {
   canCancelOffer,
   canCheckCancelledHold,
   canCheckExistingPayment,
+  checkoutLinkLabel,
   checkoutLinkVisible,
   studioLocked,
 } from "../lib/plan-ui.ts";
@@ -251,5 +252,64 @@ test("the new customer's checkout link shows only when the backend serves the pa
     ),
     false,
     "a booked plan needs no link",
+  );
+  // Once the studio starts PayPal itself, the customer cannot pay that order.
+  for (const change of [
+    (p: Plan) => {
+      p.orderId = "ORD";
+      p.orderFrom = "studio";
+    },
+    (p: Plan) => {
+      p.orderFrom = "studio";
+    },
+    (p: Plan) => {
+      p.orderId = "ORD";
+    },
+  ])
+    assert.equal(checkoutLinkVisible(plan(change), supported), false);
+  assert.equal(
+    checkoutLinkVisible(
+      plan((p) => {
+        p.orderId = "ORD";
+        p.orderFrom = "checkout";
+      }),
+      supported,
+    ),
+    true,
+    "the customer's own PayPal checkout",
+  );
+});
+
+test("the checkout link's label says where the new customer's payment stands", () => {
+  const plan = (change: (p: Plan) => void = () => {}) => studio(change).plan!;
+  const now = Date.now();
+  assert.equal(checkoutLinkLabel(plan(), now), "ready to pay");
+  assert.equal(
+    checkoutLinkLabel(plan((p) => (p.moves[1].consent = "waiting")), now),
+    "after approvals",
+  );
+  assert.equal(
+    checkoutLinkLabel(
+      plan((p) => {
+        p.orderId = "ORD";
+        p.orderFrom = "checkout";
+      }),
+      now,
+    ),
+    "PayPal opened",
+  );
+  const held = plan((p) => {
+    p.orderId = "ORD";
+    p.status = "authorized";
+    p.authorizationId = "AUTH";
+  });
+  assert.equal(checkoutLinkLabel(held, Date.parse(held.expiresAt) - 1), "approved");
+  assert.equal(
+    checkoutLinkLabel(held, Date.parse(held.expiresAt) + 1),
+    "hold expired",
+  );
+  assert.equal(
+    checkoutLinkLabel(plan((p) => (p.status = "review")), now),
+    "checking",
   );
 });

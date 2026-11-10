@@ -6,6 +6,7 @@ import {
   CalendarCheck,
   Check,
   CheckCheck,
+  Clock3,
   CreditCard,
   Loader2,
   ShieldCheck,
@@ -13,7 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { money, time } from "@/lib/domain";
-import type { CheckoutView } from "@/lib/customer-views";
+import { pacificTime, type CheckoutView } from "@/lib/customer-views";
 type Reply = CheckoutView & { error?: string; approvalUrl?: string };
 class LinkError extends Error {
   status: number;
@@ -29,15 +30,29 @@ const longDate = (date: string) =>
     day: "numeric",
     timeZone: "UTC",
   });
-// The viewer's own clock time, in the app's 12-hour style.
-const clock = (iso: string) => {
-  const d = new Date(iso);
-  return time(d.getHours() * 60 + d.getMinutes());
-};
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const message = (e: unknown) =>
   e instanceof Error ? e.message : "Please try again.";
 const FINAL = ["complete", "declined", "expired", "cancelled"];
+type State =
+  | "booked"
+  | "lapsed"
+  | "approved"
+  | "checking"
+  | "closed"
+  | "studio"
+  | "waiting"
+  | "ready";
+const HEADLINES: Record<State, string> = {
+  booked: "You're booked.",
+  lapsed: "Your time hold has expired.",
+  approved: "Your payment is approved.",
+  checking: "Your payment is being checked.",
+  closed: "This booking has closed.",
+  studio: "The studio is finishing your payment.",
+  waiting: "Your session is almost ready.",
+  ready: "Your session is ready to book.",
+};
 export default function NewCustomerCheckout({ token }: { token: string }) {
   const [view, setView] = useState<CheckoutView | null>(null),
     [error, setError] = useState(""),
@@ -164,21 +179,24 @@ export default function NewCustomerCheckout({ token }: { token: string }) {
   const first = v?.name.split(" ")[0] ?? "";
   const practice = v?.mode === "practice";
   const timeLeft = v ? Date.parse(v.expiresAt) - readAt : 0;
-  const state: "booked" | "approved" | "checking" | "closed" | "waiting" | "ready" =
-    !v
-      ? "closed"
-      : v.booked
-        ? "booked"
-        : v.status === "authorized"
-          ? "approved"
-          : ["declined", "expired", "cancelled"].includes(v.status) ||
-              (v.status === "proposed" && timeLeft <= 0)
-            ? "closed"
-            : v.status === "proposed"
-              ? v.accepted < v.affected
+  const state: State = !v
+    ? "closed"
+    : v.booked
+      ? "booked"
+      : v.status === "authorized"
+        ? v.payment === "lapsed" || timeLeft <= 0
+          ? "lapsed"
+          : "approved"
+        : ["declined", "expired", "cancelled"].includes(v.status) ||
+            (v.status === "proposed" && timeLeft <= 0)
+          ? "closed"
+          : v.status === "proposed"
+            ? v.payment === "studio"
+              ? "studio"
+              : v.accepted < v.affected
                 ? "waiting"
                 : "ready"
-              : "checking";
+            : "checking";
   const waiting = v ? v.affected - v.accepted : 0;
   const closedReason = !v
     ? ""
@@ -226,30 +244,22 @@ export default function NewCustomerCheckout({ token }: { token: string }) {
             <p className="eyebrow">YOUR NEW BOOKING</p>
             <h1>
               Hi {first}.
-              <span>
-                {state === "booked"
-                  ? "You're booked."
-                  : state === "approved"
-                    ? "Your payment is approved."
-                    : state === "checking"
-                      ? "Your payment is being checked."
-                      : state === "closed"
-                        ? "This booking has closed."
-                        : state === "waiting"
-                          ? "Your session is almost ready."
-                          : "Your session is ready to book."}
-              </span>
+              <span>{HEADLINES[state]}</span>
             </h1>
             <p className="offer-intro">
               {state === "booked"
                 ? "Your session is confirmed. Thank you for booking."
-                : state === "approved"
-                  ? "Thank you. PayPal is holding your payment while the studio confirms."
-                  : state === "checking"
-                    ? "The studio is checking your payment with PayPal."
-                    : state === "closed"
-                      ? "This time couldn't be held for you."
-                      : v.affected === 0
+                : state === "lapsed"
+                  ? "PayPal approved your payment, but the studio didn't confirm it in time."
+                  : state === "approved"
+                    ? "Thank you. PayPal is holding your payment while the studio confirms."
+                    : state === "checking"
+                      ? "The studio is checking your payment with PayPal."
+                      : state === "closed"
+                        ? "This time couldn't be held for you."
+                        : state === "studio"
+                          ? "The studio started the PayPal payment for this booking."
+                          : v.affected === 0
                         ? "This time is free and held for you."
                         : state === "waiting"
                           ? `The studio asked ${plural(v.affected, "customer")} to move so you can have this time. You can pay once they agree.`
@@ -359,21 +369,27 @@ export default function NewCustomerCheckout({ token }: { token: string }) {
                     : practice
                       ? "The charge and the refunds are simulated."
                       : v.payment === "started"
-                        ? "You opened PayPal earlier. Continue there to approve the hold."
+                        ? "You started paying earlier. Pay with PayPal picks up where you left off."
                         : `You approve a ${money(v.total)} hold in PayPal sandbox. The studio confirms your booking, then charges it.`}
                   <br />
-                  Your time is held until {clock(v.expiresAt)}.
+                  Your time is held until {pacificTime(v.expiresAt)} Pacific
+                  time.
                 </p>
               </div>
             ) : (
               <div className="offer-result">
                 <span
-                  className={"result-icon " + (state === "closed" ? "declined" : "")}
+                  className={
+                    "result-icon " +
+                    (state === "closed" || state === "lapsed" ? "declined" : "")
+                  }
                 >
-                  {state === "closed" ? (
+                  {state === "closed" || state === "lapsed" ? (
                     <X />
                   ) : state === "booked" ? (
                     <CheckCheck />
+                  ) : state === "studio" ? (
+                    <Clock3 />
                   ) : (
                     <Check />
                   )}
@@ -385,7 +401,9 @@ export default function NewCustomerCheckout({ token }: { token: string }) {
                       ? "The studio confirms next."
                       : state === "checking"
                         ? "No need to pay again."
-                        : "Nothing was charged."}
+                        : state === "studio"
+                          ? "Nothing to pay here."
+                          : "Nothing was charged."}
                 </h2>
                 <p>
                   {state === "booked"
@@ -396,7 +414,11 @@ export default function NewCustomerCheckout({ token }: { token: string }) {
                       ? `${money(v.total)} is on hold, not charged. Once the studio confirms your booking, PayPal charges it and the agreed refunds go to the customers who moved.`
                       : state === "checking"
                         ? "Nothing more is needed from you right now. The studio will confirm what PayPal shows."
-                        : closedReason}
+                        : state === "studio"
+                          ? "The studio will finish the payment with you. This page updates on its own."
+                          : state === "lapsed"
+                            ? "The studio will release the hold on your payment. Ask the studio for a new link to book this time again."
+                            : closedReason}
                 </p>
               </div>
             )}

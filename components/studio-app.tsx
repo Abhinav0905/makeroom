@@ -32,6 +32,7 @@ import {
   canCancelOffer,
   canCheckCancelledHold,
   canCheckExistingPayment,
+  checkoutLinkLabel,
   checkoutLinkVisible,
   studioLocked,
 } from "@/lib/plan-ui";
@@ -59,6 +60,8 @@ const defaults: Integrations = {
 export default function StudioApp() {
   const [studio, setStudio] = useState<Studio>(seed),
     [integrations, setIntegrations] = useState<Integrations>(defaults);
+  // When the studio was last read, so expiry is judged against a known time.
+  const [checkedAt, setCheckedAt] = useState(0);
   const [ready, setReady] = useState(false),
     [login, setLogin] = useState(false),
     [busy, setBusy] = useState(""),
@@ -84,6 +87,7 @@ export default function StudioApp() {
     setStudio(d.studio);
     setRequest(d.studio.request);
     setIntegrations(d.integrations);
+    setCheckedAt(Date.now());
     setReady(true);
     setLogin(false);
     return d.studio as Studio;
@@ -132,6 +136,7 @@ export default function StudioApp() {
       setStudio(d.studio);
       setRequest(d.studio.request);
       setIntegrations(d.integrations);
+      setCheckedAt(Date.now());
       return d.studio;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Please try again.");
@@ -169,6 +174,13 @@ export default function StudioApp() {
   const locked = studioLocked(studio);
   const accepted = p?.moves.filter((m) => m.consent === "accepted").length ?? 0;
   const allAccepted = !!p && p.moves.every((m) => m.consent === "accepted");
+  const linkLabel = p ? checkoutLinkLabel(p, checkedAt) : "";
+  const linkTone =
+    linkLabel === "hold expired"
+      ? "declined"
+      : ["ready to pay", "approved"].includes(linkLabel)
+        ? "accepted"
+        : "waiting";
   const disabled = !!busy || !ready;
   async function checkout() {
     const s = await act(
@@ -718,29 +730,20 @@ export default function StudioApp() {
                                 {p.request.name.split(" ")[0]}&apos;s checkout
                               </strong>
                               <span
-                                className={
-                                  "consent-pill " +
-                                  (allAccepted ? "accepted" : "waiting")
-                                }
+                                className={"consent-pill " + linkTone}
                               >
-                                {allAccepted ? (
+                                {linkTone === "accepted" ? (
                                   <Check size={11} />
                                 ) : (
                                   <Clock3 size={11} />
                                 )}{" "}
-                                {p.status === "authorized"
-                                  ? "approved"
-                                  : p.status === "review"
-                                    ? "checking"
-                                    : allAccepted
-                                      ? "ready to pay"
-                                      : "after approvals"}
+                                {linkLabel}
                               </span>
                             </div>
                             <p className="checkout-link-note">
-                              {p.request.name.split(" ")[0]} sees the time,
-                              price and agreed refunds, then pays from this
-                              link. You can also finish below.
+                              {studio.mode === "practice"
+                                ? `${p.request.name.split(" ")[0]} sees the time, price and agreed refunds, then pays from this link (simulated). You can also finish below.`
+                                : `${p.request.name.split(" ")[0]} sees the time, price and agreed refunds, then approves a PayPal hold from this link. You confirm the booking and refunds below.`}
                             </p>
                             <div className="move-actions">
                               <a
@@ -798,7 +801,9 @@ export default function StudioApp() {
                                 ? "Waiting for each customer's choice."
                                 : studio.mode === "practice"
                                   ? "Simulated charge and refunds. No money moves."
-                                  : "The buyer approves a hold first. You confirm the booking next."}
+                                  : p.orderFrom === "checkout"
+                                    ? `${p.request.name.split(" ")[0]} opened PayPal from her checkout link. If you continue here, PayPal returns you to her page.`
+                                    : "The buyer approves a hold first. You confirm the booking next."}
                             </p>
                           </>
                         )}

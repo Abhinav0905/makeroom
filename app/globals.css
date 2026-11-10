@@ -1884,6 +1884,9 @@ code {
   display: block;
   text-wrap: balance;
 }
+.checkout-card .fine-print {
+  text-wrap: balance;
+}
 .checkout-card .offer-result h2 {
   line-height: 1.25;
   text-wrap: balance;

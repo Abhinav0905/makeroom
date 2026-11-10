@@ -1,5 +1,5 @@
 // Which studio controls a plan allows. Pure, so node:test can check them.
-import { type Plan, type Studio } from "./domain.ts";
+import { orderStarter, type Plan, type Studio } from "./domain.ts";
 /**
  * Request and preference inputs stay locked while a payment step runs, while a
  * PayPal checkout is still open, or once the booking is confirmed. Mirrors
@@ -43,7 +43,9 @@ export function canCheckCancelledHold(p: Plan) {
 /**
  * The new customer's checkout link on an open plan. Shown only when the
  * backend reports the checkout page (an older API has no such route) and the
- * plan has a link: plans saved before the page existed do not.
+ * plan has a link: plans saved before the page existed do not. Hidden once
+ * the studio has started the PayPal payment itself, because the customer
+ * cannot pay that order from the link.
  */
 export function checkoutLinkVisible(
   p: Plan,
@@ -53,6 +55,17 @@ export function checkoutLinkVisible(
     backend.checkoutPage === true &&
     !!p.checkoutToken &&
     !p.committed &&
+    orderStarter(p) !== "studio" &&
     !["declined", "expired", "cancelled"].includes(p.status)
   );
+}
+/** The short status beside the checkout link in the studio's plan panel. */
+export function checkoutLinkLabel(p: Plan, now: number) {
+  if (p.status === "authorized")
+    return Date.parse(p.expiresAt) < now ? "hold expired" : "approved";
+  if (p.status === "review") return "checking";
+  if (orderStarter(p) === "checkout") return "PayPal opened";
+  return p.moves.every((m) => m.consent === "accepted")
+    ? "ready to pay"
+    : "after approvals";
 }
