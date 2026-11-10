@@ -6,6 +6,7 @@
 // injected, so node:test can drive this without Cloudflare bindings.
 import {
   DomainError,
+  orderStarter,
   practiceSettle,
   type Mode,
   type Plan,
@@ -14,15 +15,6 @@ import {
 import { guestOwner } from "./guest.ts";
 import { checkoutView } from "./customer-views.ts";
 import type { CheckoutPage } from "./payments-core.ts";
-export const CHECKOUT_TOKEN = /^[a-f0-9-]{72}$/;
-/** True when token is the checkout link of the studio's current plan planId. */
-export function isCurrentCheckout(s: Studio, planId: string, token: string) {
-  return (
-    !!s.plan?.checkoutToken &&
-    s.plan.id === planId &&
-    s.plan.checkoutToken === token
-  );
-}
 /**
  * The GitHub Pages client reaches only its own `pages:` practice studios, and
  * guest studios never reach a PayPal sandbox step.
@@ -46,9 +38,9 @@ function assertCurrent(s: Studio, token: string): Plan {
   return s.plan;
 }
 /** The checkout view, only while token is still the plan's checkout link. */
-export function currentCheckoutView(s: Studio, token: string) {
+export function currentCheckoutView(s: Studio, token: string, now = Date.now()) {
   assertCurrent(s, token);
-  return checkoutView(s);
+  return checkoutView(s, now);
 }
 /**
  * Why the customer cannot pay right now, in plain words, or the plan when
@@ -63,7 +55,9 @@ export function assertCheckoutOpen(s: Studio, token: string, now = Date.now()) {
     );
   if (p.status === "authorized")
     throw new DomainError(
-      "Your payment is already approved. The studio confirms your booking next.",
+      Date.parse(p.expiresAt) < now
+        ? "Your time hold expired before the studio confirmed. Nothing was charged, and the studio will release the hold."
+        : "Your payment is already approved. The studio confirms your booking next.",
     );
   if (p.status === "review")
     throw new DomainError(
@@ -111,17 +105,6 @@ export function practiceCheckout(s: Studio, token: string, now = Date.now()) {
   assertCheckoutOpen(s, token, now);
   practiceSettle(s);
 }
-/**
- * PayPal sends the buyer back to the checkout page, appending its order as
- * `token`. The checkout link token stays in the path.
- */
-export function checkoutReturn(origin: string, token: string) {
-  const page = origin + "/checkout/" + encodeURIComponent(token);
-  return {
-    returnUrl: page + "?paypal=approved",
-    cancelUrl: page + "?paypal=cancel",
-  };
-}
 export type CheckoutDeps = {
   payments: {
     beginCheckout(
@@ -142,7 +125,8 @@ export function createCheckout(deps: CheckoutDeps) {
   const now = () => (deps.now ? deps.now() : Date.now());
   /**
    * The pay button. Practice settles at once. Sandbox opens (or reopens) the
-   * plan's PayPal checkout and returns its approval link.
+   * plan's PayPal checkout and returns its approval link; if the customer had
+   * already approved it, the hold is recorded instead.
    */
   async function pay(
     owner: string,
@@ -158,13 +142,13 @@ export function createCheckout(deps: CheckoutDeps) {
       };
     checkoutAccess(owner, studio.mode, false);
     const s = await deps.payments.beginCheckout(owner, origin, {
-      ...checkoutReturn(origin, token),
       check(s) {
         const p = assertCheckoutOpen(s, token, now());
-        // PayPal would return the buyer to the studio's page, not here.
-        if (p.orderId && !p.checkoutOrder)
+        // The studio's order returns its buyer to the studio page, and its
+        // orderKey must keep that address, even after a timed-out create.
+        if (orderStarter(p) === "studio")
           throw new DomainError(
-            "The studio already opened PayPal for this booking. Ask the studio to finish the payment.",
+            "The studio is finishing this payment with you. There is nothing to pay here.",
           );
       },
     });

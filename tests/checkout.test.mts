@@ -8,15 +8,18 @@ import {
   seed,
   type Studio,
 } from "../lib/domain.ts";
-import { checkoutView, offerView } from "../lib/customer-views.ts";
 import {
-  CHECKOUT_TOKEN,
+  checkoutView,
+  offerView,
+  pacificTime,
+} from "../lib/customer-views.ts";
+import {
   checkoutAccess,
-  checkoutReturn,
   createCheckout,
   currentCheckoutView,
-  isCurrentCheckout,
 } from "../lib/checkout.ts";
+import { LINK_TOKEN, createLinks, type LinkRow } from "../lib/links.ts";
+import { returnUrls } from "../lib/payments-core.ts";
 import { appHref } from "../lib/client-runtime.ts";
 import { memoryStore } from "./support/memory-store.mts";
 
@@ -54,12 +57,29 @@ function practiceSetup(s: Studio, now?: () => number) {
   return { store, checkout, token, pay, paypalCalls, studio: () => store.get(OWNER) };
 }
 
+/** The offers table and studios of lib/store.ts, in memory. */
+function linkSetup(s: Studio) {
+  const store = memoryStore();
+  store.put(OWNER, s);
+  const rows = new Map<string, LinkRow>();
+  const register = (st: Studio) => {
+    const p = st.plan!;
+    for (const t of [...p.moves.map((m) => m.token), p.checkoutToken!])
+      rows.set(t, { owner: OWNER, plan_id: p.id });
+  };
+  register(s);
+  const links = createLinks({
+    findLink: async (token) => rows.get(token) ?? null,
+    readStudio: store.readStudio,
+  });
+  return { store, links, register };
+}
+
 test("each new plan gets its own checkout link, kept out of every offer view", () => {
   const s = seed();
   const first = propose(s, s.request);
-  assert.match(first.checkoutToken!, CHECKOUT_TOKEN);
+  assert.match(first.checkoutToken!, LINK_TOKEN);
   assert.ok(first.moves.every((m) => m.token !== first.checkoutToken));
-  assert.ok(isCurrentCheckout(s, first.id, first.checkoutToken!));
   for (const m of first.moves) {
     const shown = JSON.stringify(offerView(s, m.token));
     assert.ok(!shown.includes(first.checkoutToken!), "no checkout link");
@@ -69,24 +89,59 @@ test("each new plan gets its own checkout link, kept out of every offer view", (
     }
   }
   const second = propose(s, s.request);
-  assert.match(second.checkoutToken!, CHECKOUT_TOKEN);
+  assert.match(second.checkoutToken!, LINK_TOKEN);
   assert.notEqual(second.checkoutToken, first.checkoutToken);
-  assert.ok(isCurrentCheckout(s, second.id, second.checkoutToken!));
-  assert.equal(isCurrentCheckout(s, first.id, first.checkoutToken!), false);
-  assert.equal(isCurrentCheckout(s, second.id, first.checkoutToken!), false);
-  assert.equal(
-    isCurrentCheckout(s, second.id, second.moves[0].token),
-    false,
-    "an offer link is not a checkout link",
-  );
   assert.throws(
     () => currentCheckoutView(s, first.checkoutToken!),
     status(410),
   );
-  // Plans stored before the checkout page existed simply have no link.
-  delete s.plan!.checkoutToken;
-  assert.equal(isCurrentCheckout(s, second.id, second.checkoutToken!), false);
-  assert.equal(isCurrentCheckout(s, second.id, ""), false);
+  assert.doesNotThrow(() => currentCheckoutView(s, second.checkoutToken!));
+});
+
+test("checkout and offer links answer 404 for the wrong kind and 410 once replaced", async () => {
+  const s = planned();
+  const first = s.plan!;
+  const { store, links, register } = linkSetup(s);
+  const found = await links.checkoutOwner(first.checkoutToken!);
+  assert.equal(found.owner, OWNER);
+  assert.equal(found.studio.plan!.id, first.id);
+  assert.equal(
+    (await links.offerOwner(first.moves[0].token)).studio.plan!.id,
+    first.id,
+  );
+  // The current plan's link of the other kind is simply not found.
+  await assert.rejects(links.checkoutOwner(first.moves[0].token), status(404));
+  await assert.rejects(links.offerOwner(first.checkoutToken!), status(404));
+  // Malformed and unknown links.
+  await assert.rejects(links.checkoutOwner("nope"), status(404));
+  await assert.rejects(
+    links.checkoutOwner("a".repeat(72)),
+    /booking link wasn't found/,
+  );
+  // A new arrangement replaces every earlier link.
+  const next = await store.updateStudio(OWNER, (st) => {
+    propose(st, st.request);
+  });
+  register(next);
+  await assert.rejects(
+    links.checkoutOwner(first.checkoutToken!),
+    (e: unknown) => status(410)(e) && /replaced this booking link/.test(String(e)),
+  );
+  await assert.rejects(links.offerOwner(first.moves[0].token), status(410));
+  assert.ok(await links.checkoutOwner(next.plan!.checkoutToken!));
+  // A plan stored before the checkout page existed has no checkout link.
+  await store.updateStudio(OWNER, (st) => {
+    delete st.plan!.checkoutToken;
+  });
+  await assert.rejects(
+    links.checkoutOwner(next.plan!.checkoutToken!),
+    status(404),
+  );
+  // Resetting the studio removes the plan.
+  await store.updateStudio(OWNER, (st) => {
+    st.plan = null;
+  });
+  await assert.rejects(links.offerOwner(next.plan!.moves[0].token), status(410));
 });
 
 test("the checkout view shows Maya's booking and counts, never other customers", () => {
@@ -122,12 +177,33 @@ test("the checkout view shows Maya's booking and counts, never other customers",
   ])
     assert.ok(!text.includes(secret));
   // Payment states the page distinguishes.
+  const expiry = Date.parse(p.expiresAt);
   p.orderId = "ORD";
+  p.orderFrom = "checkout";
   assert.equal(checkoutView(s).payment, "started");
+  p.orderFrom = "studio";
+  assert.equal(checkoutView(s).payment, "studio", "the studio started PayPal");
+  delete p.orderFrom;
+  assert.equal(checkoutView(s).payment, "studio", "orders from before orderFrom");
+  delete p.orderId;
+  p.orderFrom = "studio";
+  assert.equal(
+    checkoutView(s).payment,
+    "studio",
+    "a studio order whose create timed out",
+  );
+  p.orderId = "ORD";
   p.status = "authorized";
-  assert.equal(checkoutView(s).payment, "on-hold");
+  assert.equal(checkoutView(s, expiry - 1).payment, "on-hold");
+  assert.equal(checkoutView(s, expiry + 1).payment, "lapsed", "hold past expiry");
   p.status = "review";
   assert.equal(checkoutView(s).payment, "checking");
+});
+
+test("the hold time is shown in Pacific time like the session", () => {
+  assert.equal(pacificTime("2026-11-12T22:41:00.000Z"), "2:41 pm");
+  assert.equal(pacificTime("2026-11-12T08:05:00.000Z"), "12:05 am");
+  assert.equal(pacificTime("2026-07-01T19:00:00.000Z"), "12:00 pm", "daylight time");
 });
 
 test("practice pay is the studio's practice booking, only once everyone agreed", async () => {
@@ -239,9 +315,18 @@ test("the Pages client reaches only pages: practice studios; guests never reach 
   assert.deepEqual(guest.paypalCalls, []);
 });
 
-test("PayPal returns the buyer to the checkout page, and Pages links use ?checkout=", () => {
-  const token = planned().plan!.checkoutToken!;
-  assert.deepEqual(checkoutReturn("https://makeroom.test", token), {
+test("PayPal returns the buyer to whoever started the order, and Pages links use ?checkout=", () => {
+  const p = planned().plan!;
+  const token = p.checkoutToken!;
+  const studioUrls = {
+    returnUrl: "https://makeroom.test/?paypal=request",
+    cancelUrl: "https://makeroom.test/?paypal=cancel",
+  };
+  assert.deepEqual(returnUrls("https://makeroom.test", p), studioUrls);
+  p.orderFrom = "studio";
+  assert.deepEqual(returnUrls("https://makeroom.test", p), studioUrls);
+  p.orderFrom = "checkout";
+  assert.deepEqual(returnUrls("https://makeroom.test", p), {
     returnUrl: "https://makeroom.test/checkout/" + token + "?paypal=approved",
     cancelUrl: "https://makeroom.test/checkout/" + token + "?paypal=cancel",
   });

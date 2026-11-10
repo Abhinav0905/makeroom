@@ -1274,7 +1274,7 @@ test("M1: paying from Maya's link makes the studio's PayPal calls with the same 
   happyPath(maya.fake);
   const r = await link.pay();
   assert.equal(r.approvalUrl, APPROVAL, "the same sandbox approval link check");
-  assert.equal(r.studio.plan!.checkoutOrder, true);
+  assert.equal(r.studio.plan!.orderFrom, "checkout");
   let s = await link.approved("ORD");
   assert.equal(s.plan!.status, "authorized");
   assert.equal(s.plan!.authorizationId, "AUTH");
@@ -1316,7 +1316,7 @@ test("M1: paying from Maya's link makes the studio's PayPal calls with the same 
     comparable(mayaOrder, maya.studio().plan!.orderKey),
     comparable(studioOrder, studioPath.studio().plan!.orderKey),
   );
-  assert.equal(studioPath.studio().plan!.checkoutOrder, undefined);
+  assert.equal(studioPath.studio().plan!.orderFrom, "studio");
   assert.deepEqual(
     maya.studio().bookings.map((b) => [b.start, b.refunded]),
     studioPath.studio().bookings.map((b) => [b.start, b.refunded]),
@@ -1328,7 +1328,7 @@ test("M1: paying from Maya's link makes the studio's PayPal calls with the same 
 test("M2: a PayPal return with another order is refused without calling PayPal", async () => {
   const t = setup((s) => {
     withOrder(s);
-    s.plan!.checkoutOrder = true;
+    s.plan!.orderFrom = "checkout";
   });
   const link = withCheckout(t);
   await assert.rejects(
@@ -1350,7 +1350,7 @@ test("M2: a PayPal return with another order is refused without calling PayPal",
 test("M3: Maya's link reopens her own checkout and records a reload only once", async () => {
   const t = setup((s) => {
     withOrder(s);
-    s.plan!.checkoutOrder = true;
+    s.plan!.orderFrom = "checkout";
   });
   const link = withCheckout(t);
   t.fake.on(GET_ORDER, ok(ORDER_PAYER));
@@ -1361,7 +1361,7 @@ test("M3: Maya's link reopens her own checkout and records a reload only once", 
 
   const held = setup((s) => {
     authorized(s);
-    s.plan!.checkoutOrder = true;
+    s.plan!.orderFrom = "checkout";
   });
   const s = await withCheckout(held).approved("ORD");
   assert.equal(s.plan!.status, "authorized");
@@ -1404,7 +1404,7 @@ for (const [label, shape, message] of [
   [
     "the studio already opened PayPal",
     withOrder,
-    /studio already opened PayPal/,
+    /studio is finishing this payment/,
   ],
   [
     "an original booking is not funded",
@@ -1421,3 +1421,127 @@ for (const [label, shape, message] of [
     assert.equal(t.studio().version, before.version, "nothing saved");
     assert.equal(t.fake.calls.length + t.fake.tokens, 0);
   });
+
+/** Maya's own PayPal checkout, opened from her link. */
+function mayaOrder(s: Studio) {
+  withOrder(s);
+  s.plan!.orderFrom = "checkout";
+}
+const returnUrl = (call: { body: unknown }) =>
+  (call.body as OrderBody).payment_source.paypal.experience_context.return_url;
+
+test("M5: after the studio's create times out, Maya's link sends nothing to PayPal", async () => {
+  const t = setup();
+  t.fake.on(CREATE, TIMEOUT);
+  await assert.rejects(t.payments.beginCheckout(OWNER, ORIGIN), uncertain);
+  assert.equal(t.studio().plan!.orderId, undefined);
+  assert.equal(t.studio().plan!.orderFrom, "studio", "saved before the call");
+  const before = t.studio().version;
+  // The studio's orderKey must keep the studio's return address.
+  await assert.rejects(withCheckout(t).pay(), /studio is finishing this payment/);
+  assert.equal(t.studio().version, before, "nothing saved");
+  assert.equal(t.fake.to(CREATE).length, 1, "no second create with that key");
+  // The studio's own retry repeats the identical request.
+  t.fake.on(CREATE, ok(ORDER_PAYER, 201));
+  await t.payments.beginCheckout(OWNER, ORIGIN);
+  const [first, retry] = t.fake.to(CREATE);
+  assert.equal(retry.key, first.key);
+  assert.deepEqual(retry.body, first.body);
+  assert.equal(returnUrl(retry), ORIGIN + "/?paypal=request");
+  done(t.fake);
+});
+
+test("M6: after Maya's create times out, the studio's retry keeps her return address", async () => {
+  const t = setup();
+  const link = withCheckout(t);
+  t.fake.on(CREATE, TIMEOUT);
+  await assert.rejects(link.pay(), uncertain);
+  assert.equal(t.studio().plan!.orderFrom, "checkout");
+  t.fake.on(CREATE, ok(ORDER_PAYER, 201));
+  const s = await t.payments.beginCheckout(OWNER, ORIGIN);
+  assert.equal(s.plan!.approvalUrl, APPROVAL);
+  const [first, retry] = t.fake.to(CREATE);
+  assert.equal(retry.key, first.key);
+  assert.deepEqual(retry.body, first.body, "same key, same request");
+  assert.equal(
+    returnUrl(retry),
+    ORIGIN + "/checkout/" + link.token + "?paypal=approved",
+  );
+  // Maya can pick up the same order from her page.
+  t.fake.on(GET_ORDER, ok(ORDER_PAYER));
+  assert.equal((await link.pay()).approvalUrl, APPROVAL);
+  done(t.fake);
+});
+
+test("M7: Maya approved but never got back; Pay records the hold with the same key", async () => {
+  const t = setup(mayaOrder);
+  t.fake
+    .on(GET_ORDER, ok(ORDER_APPROVED))
+    .on(AUTHORIZE, ok(ORDER_AUTH("CREATED"), 201));
+  const r = await withCheckout(t).pay();
+  assert.equal(r.approvalUrl, undefined, "no approval link to follow");
+  assert.equal(r.studio.plan!.status, "authorized");
+  assert.equal(r.studio.plan!.authorizationId, "AUTH");
+  assert.equal(r.studio.plan!.error, undefined);
+  assert.deepEqual(t.fake.routes(), [GET_ORDER, AUTHORIZE]);
+  assert.equal(t.fake.to(AUTHORIZE)[0].key, t.studio().plan!.authorizeKey);
+  done(t.fake);
+
+  // The authorize itself went through but its answer was lost.
+  const held = setup(mayaOrder);
+  held.fake.on(GET_ORDER, ok(ORDER_AUTH("CREATED")));
+  const s = (await withCheckout(held).pay()).studio;
+  assert.equal(s.plan!.status, "authorized");
+  assert.deepEqual(held.fake.routes(), [GET_ORDER], "no second authorize");
+  done(held.fake);
+
+  // An authorize timeout may have made a hold: review, as finishApproval does.
+  const lost = setup(mayaOrder);
+  lost.fake.on(GET_ORDER, ok(ORDER_APPROVED)).on(AUTHORIZE, TIMEOUT);
+  await assert.rejects(withCheckout(lost).pay(), uncertain);
+  assert.equal(lost.studio().plan!.status, "review");
+  assert.equal(lost.studio().operation, undefined);
+  done(lost.fake);
+
+  // The studio's own button keeps its old behaviour for the same order.
+  const owner = setup(mayaOrder);
+  owner.fake.on(GET_ORDER, ok(ORDER_APPROVED));
+  await assert.rejects(
+    owner.payments.beginCheckout(OWNER, ORIGIN),
+    /did not return a sandbox approval link/,
+  );
+  assert.deepEqual(owner.fake.routes(), [GET_ORDER]);
+  done(owner.fake);
+});
+
+test("M8: approval from an old link is refused inside the payment lock", async () => {
+  const t = setup(mayaOrder);
+  const link = withCheckout(t);
+  const snapshot = t.studio();
+  // The studio's plan changes after the page read it.
+  const replaced = t.studio();
+  replaced.plan!.checkoutToken = "f".repeat(72);
+  t.store.put(OWNER, replaced);
+  await assert.rejects(
+    createCheckout({ payments: t.payments, updateStudio: t.store.updateStudio })
+      .approved(OWNER, snapshot, link.token, "ORD"),
+    (e: unknown) => (e as { status?: number }).status === 410,
+  );
+  assert.equal(t.studio().plan!.status, "proposed");
+  assert.equal(t.studio().operation, undefined);
+  assert.equal(t.fake.calls.length + t.fake.tokens, 0);
+});
+
+test("M9: a hold past its offer's expiry is not paid again and cannot be captured", async () => {
+  const t = setup((s) => {
+    authorized(s);
+    s.plan!.orderFrom = "checkout";
+    s.plan!.expiresAt = new Date(Date.now() - 60_000).toISOString();
+  });
+  await assert.rejects(
+    withCheckout(t).pay(),
+    /hold expired before the studio confirmed/,
+  );
+  await assert.rejects(t.payments.captureAndSettle(OWNER), /The offer expired/);
+  assert.equal(t.fake.calls.length + t.fake.tokens, 0);
+});

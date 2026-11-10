@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { seed, DomainError, type Studio } from "./domain";
-import { CHECKOUT_TOKEN, isCurrentCheckout } from "./checkout";
+import { createLinks, type LinkRow } from "./links";
 function db() {
   if (!env.DB) throw new Error("Studio storage is unavailable.");
   return env.DB;
@@ -89,36 +89,12 @@ export async function saveOffers(owner: string, s: Studio) {
     ),
   );
 }
-export async function offerOwner(token: string) {
-  if (!/^[a-f0-9-]{72}$/.test(token))
-    throw new DomainError("Offer not found.", 404);
-  const o = await db()
-    .prepare("SELECT owner,plan_id FROM offers WHERE token=?")
-    .bind(token)
-    .first<{ owner: string; plan_id: string }>();
-  if (!o) throw new DomainError("Offer not found.", 404);
-  const s = await readStudio(o.owner);
-  if (s.plan?.id !== o.plan_id || !s.plan.moves.some((m) => m.token === token))
-    throw new DomainError(
-      "The studio has replaced this offer. Ask for the latest link.",
-      410,
-    );
-  return { owner: o.owner, studio: s };
-}
-// Only the current plan's checkout link is accepted; offer links are not.
-export async function checkoutOwner(token: string) {
-  if (!CHECKOUT_TOKEN.test(token))
-    throw new DomainError("This booking link wasn't found.", 404);
-  const o = await db()
-    .prepare("SELECT owner,plan_id FROM offers WHERE token=?")
-    .bind(token)
-    .first<{ owner: string; plan_id: string }>();
-  if (!o) throw new DomainError("This booking link wasn't found.", 404);
-  const s = await readStudio(o.owner);
-  if (!isCurrentCheckout(s, o.plan_id, token))
-    throw new DomainError(
-      "The studio has replaced this booking link. Ask for the latest one.",
-      410,
-    );
-  return { owner: o.owner, studio: s };
-}
+// Offer and checkout links: only the current plan's link of the right kind.
+export const { offerOwner, checkoutOwner } = createLinks({
+  findLink: (token) =>
+    db()
+      .prepare("SELECT owner,plan_id FROM offers WHERE token=?")
+      .bind(token)
+      .first<LinkRow>(),
+  readStudio,
+});

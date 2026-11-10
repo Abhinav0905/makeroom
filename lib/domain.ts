@@ -82,8 +82,12 @@ export type Plan = {
    * page existed have none.
    */
   checkoutToken?: string;
-  /** The PayPal order was created from the checkout page and returns there. */
-  checkoutOrder?: boolean;
+  /**
+   * Who started the plan's PayPal order: the studio's button or the new
+   * customer's checkout page. Saved before the first create call, so a retry
+   * with the same orderKey always sends the same return address.
+   */
+  orderFrom?: "studio" | "checkout";
   orderKey: string;
   authorizeKey: string;
   captureKey: string;
@@ -413,6 +417,13 @@ export function consent(
       : "The original appointments are unchanged.",
     "consent",
   );
+}
+/**
+ * Who started the plan's PayPal order. Orders from before orderFrom existed
+ * could only come from the studio's button.
+ */
+export function orderStarter(p: Plan) {
+  return p.orderFrom ?? (p.orderId ? "studio" : undefined);
 }
 export function assertReady(s: Studio) {
   expire(s);

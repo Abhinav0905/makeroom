@@ -11,15 +11,33 @@ import {
   money,
   type Booking,
   type Move,
+  type Plan,
   type Studio,
 } from "./domain.ts";
-/** Where PayPal returns a buyer who pays from the checkout page. */
+/** The new customer paying from their own checkout link. */
 export type CheckoutPage = {
-  returnUrl: string;
-  cancelUrl: string;
   /** Runs inside the payment lock before any PayPal call; throws to refuse. */
   check(s: Studio): void;
 };
+/**
+ * Where PayPal sends the buyer back to: the studio page, or the checkout page
+ * when the order was started there (PayPal appends the order as `token`).
+ * Derived from the saved orderFrom, so every request with the plan's
+ * orderKey carries the same addresses, whoever retries it.
+ */
+export function returnUrls(origin: string, p: Plan) {
+  if (p.orderFrom === "checkout" && p.checkoutToken) {
+    const page = origin + "/checkout/" + encodeURIComponent(p.checkoutToken);
+    return {
+      returnUrl: page + "?paypal=approved",
+      cancelUrl: page + "?paypal=cancel",
+    };
+  }
+  return {
+    returnUrl: origin + "/?paypal=request",
+    cancelUrl: origin + "/?paypal=cancel",
+  };
+}
 export type PaymentsDeps = {
   paypal(): PayPal;
   readStudio(owner: string): Promise<Studio>;
@@ -275,10 +293,10 @@ export function createPayments(deps: PaymentsDeps) {
       },
     );
   }
-  // page is set when the new customer pays from their own checkout link: PayPal
-  // then returns the buyer to that page, and page.check refuses inside the
-  // payment lock when the link no longer fits the studio's current plan.
-  // Without it this is the studio owner's checkout, unchanged.
+  // page is set when the new customer pays from their own checkout link, and
+  // page.check refuses inside the payment lock when the link no longer fits
+  // the studio's current plan. Without it this is the studio owner's
+  // checkout: the same PayPal calls and keys as before.
   async function beginCheckout(
     owner: string,
     origin: string,
@@ -290,9 +308,13 @@ export function createPayments(deps: PaymentsDeps) {
       (s) => {
         page?.check(s);
         assertReady(s);
+        // Saved with the payment lock, before any PayPal call: a timed-out
+        // create is retried with the same key and the same return address.
+        if (!s.plan!.orderId) s.plan!.orderFrom ??= page ? "checkout" : "studio";
       },
       async (s, save, api) => {
         const p = s.plan!;
+        const back = returnUrls(origin, p);
         // A retry after a lost response reuses orderKey, so PayPal returns
         // the order it already created instead of a second one.
         const order = p.orderId
@@ -301,13 +323,36 @@ export function createPayments(deps: PaymentsDeps) {
               p.totalCharge,
               "AUTHORIZE",
               p.orderKey,
-              page ? page.returnUrl : origin + "/?paypal=request",
-              page ? page.cancelUrl : origin + "/?paypal=cancel",
+              back.returnUrl,
+              back.cancelUrl,
               "Studio session with agreed flexibility refunds",
             );
+        // From the checkout page only: the buyer approved in PayPal but never
+        // got back to the page. Record the hold with the same authorize key
+        // instead of asking for an approval PayPal no longer offers.
+        if (
+          page &&
+          p.orderId &&
+          (order.status === "APPROVED" ||
+            order.purchase_units?.[0]?.payments?.authorizations?.length)
+        ) {
+          let held = order;
+          if (!held.purchase_units?.[0]?.payments?.authorizations?.length)
+            try {
+              held = await api.authorize(p.orderId, p.authorizeKey);
+            } catch (e) {
+              // As finishApproval: an unknown result may be a hold.
+              if (e instanceof PayPalError && e.uncertain)
+                await save((s) => {
+                  s.plan!.status = "review";
+                });
+              throw e;
+            }
+          await recordAuthorization(held, p.totalCharge, save);
+          return;
+        }
         const url = approval(order);
         await save((s) => {
-          if (page && !p.orderId) s.plan!.checkoutOrder = true;
           s.plan!.orderId = order.id;
           s.plan!.approvalUrl = url;
           delete s.plan!.error;
