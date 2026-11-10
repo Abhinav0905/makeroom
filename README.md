@@ -18,7 +18,7 @@ Maya, who pays, has her own checkout page. On the [Render copy](https://makeroom
 
 The [sandbox evidence page](https://abhinav0905.github.io/makeroom/?view=proof) shows the completed account-backed PayPal run. Run locally with your own PayPal test accounts for a new sandbox run.
 
-[Watch the public demo video](https://youtu.be/eaCp66J_7ag) (2 minutes 11 seconds). It shows the AI reading a messy customer reply, the planner, both customer approvals and a PayPal sandbox checkout on camera, then PayPal's own records of the capture and refunds. See [the matching PayPal records and IDs](docs/PAYPAL-EVIDENCE.md).
+[Watch the public demo video](https://youtu.be/ZLDnhTsb6fw) (2 minutes 16 seconds). It opens with the problem, then shows the AI reading a messy customer reply, the planner, both customer approvals and Maya paying from her own checkout page in a PayPal sandbox checkout on camera, then PayPal's own records of the capture and refunds. See [the matching PayPal records and IDs](docs/PAYPAL-EVIDENCE.md).
 
 ## Run locally
 
