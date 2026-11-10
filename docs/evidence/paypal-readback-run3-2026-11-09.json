@@ -1,0 +1,108 @@
+{
+ "readAt": "2026-11-10T00:13:12.978Z",
+ "environment": "sandbox",
+ "reads": [
+  {
+   "label": "Alex Morgan funding order",
+   "request": "GET /v2/checkout/orders/98A548198G169151E",
+   "httpStatus": 200,
+   "id": "98A548198G169151E",
+   "status": "COMPLETED",
+   "amount": {
+    "currency_code": "USD",
+    "value": "60.00"
+   },
+   "intent": "CAPTURE"
+  },
+  {
+   "label": "Alex Morgan prepayment capture",
+   "request": "GET /v2/payments/captures/8JD063356S391990W",
+   "httpStatus": 200,
+   "id": "8JD063356S391990W",
+   "status": "PARTIALLY_REFUNDED",
+   "amount": {
+    "currency_code": "USD",
+    "value": "60.00"
+   }
+  },
+  {
+   "label": "Sam Rivera funding order",
+   "request": "GET /v2/checkout/orders/1LH5463623439810F",
+   "httpStatus": 200,
+   "id": "1LH5463623439810F",
+   "status": "COMPLETED",
+   "amount": {
+    "currency_code": "USD",
+    "value": "60.00"
+   },
+   "intent": "CAPTURE"
+  },
+  {
+   "label": "Sam Rivera prepayment capture",
+   "request": "GET /v2/payments/captures/3WM404951U5130021",
+   "httpStatus": 200,
+   "id": "3WM404951U5130021",
+   "status": "PARTIALLY_REFUNDED",
+   "amount": {
+    "currency_code": "USD",
+    "value": "60.00"
+   }
+  },
+  {
+   "label": "Maya order",
+   "request": "GET /v2/checkout/orders/6TV371537K730864X",
+   "httpStatus": 200,
+   "id": "6TV371537K730864X",
+   "status": "COMPLETED",
+   "amount": {
+    "currency_code": "USD",
+    "value": "145.00"
+   },
+   "intent": "AUTHORIZE"
+  },
+  {
+   "label": "Maya authorization",
+   "request": "GET /v2/payments/authorizations/43V51968BD673011L",
+   "httpStatus": 200,
+   "id": "43V51968BD673011L",
+   "status": "CAPTURED",
+   "amount": {
+    "currency_code": "USD",
+    "value": "145.00"
+   }
+  },
+  {
+   "label": "Maya capture",
+   "request": "GET /v2/payments/captures/5N9101921R436373R",
+   "httpStatus": 200,
+   "id": "5N9101921R436373R",
+   "status": "COMPLETED",
+   "amount": {
+    "currency_code": "USD",
+    "value": "145.00"
+   }
+  },
+  {
+   "label": "Alex Morgan refund",
+   "request": "GET /v2/payments/refunds/1A9159145Y307530G",
+   "httpStatus": 200,
+   "id": "1A9159145Y307530G",
+   "status": "COMPLETED",
+   "amount": {
+    "currency_code": "USD",
+    "value": "15.00"
+   }
+  },
+  {
+   "label": "Sam Rivera refund",
+   "request": "GET /v2/payments/refunds/40G69568EX8715915",
+   "httpStatus": 200,
+   "id": "40G69568EX8715915",
+   "status": "COMPLETED",
+   "amount": {
+    "currency_code": "USD",
+    "value": "10.00"
+   }
+  }
+ ]
+}

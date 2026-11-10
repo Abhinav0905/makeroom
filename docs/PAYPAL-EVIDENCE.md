@@ -43,4 +43,22 @@ The updated code ran the same flow again in a fresh local workspace, with no lin
 
 [The second readback record](evidence/paypal-readback-run2-2026-11-09.json) has the GET requests and HTTP statuses, without credentials or buyer details.
 
-The customers and studio are fictional. In the November 8 run, one sandbox buyer account represented all three customers; in the November 9 run, each paid as a guest checkout with a published sandbox test card. No live money moved. The public practice demo simulates payments; use the [local setup](../README.md) and your own PayPal sandbox accounts to run a new payment flow.
+## Third run: Maya pays from her own checkout page (November 9, 2026)
+
+This run used the version where Maya gets her own checkout link instead of the studio paying on her behalf. Alex and Sam prepaid as guests, accepted their offers on their own links, and Maya opened her checkout link on a phone-sized screen and approved $145 on PayPal's sandbox checkout page with a published sandbox test card. The studio then confirmed, which captured her payment and sent both refunds. Every record was read back from PayPal:
+
+| Result | PayPal ID | Amount | Readback status |
+| --- | --- | --- | --- |
+| Alex's prepayment order | `98A548198G169151E` | USD 60.00 | `COMPLETED` |
+| Sam's prepayment order | `1LH5463623439810F` | USD 60.00 | `COMPLETED` |
+| Maya's order (AUTHORIZE) | `6TV371537K730864X` | USD 145.00 | `COMPLETED` |
+| Maya's authorization | `43V51968BD673011L` | USD 145.00 | `CAPTURED` |
+| Maya's capture | `5N9101921R436373R` | USD 145.00 | `COMPLETED` |
+| Alex's original capture | `8JD063356S391990W` | USD 60.00 | `PARTIALLY_REFUNDED` |
+| Sam's original capture | `3WM404951U5130021` | USD 60.00 | `PARTIALLY_REFUNDED` |
+| Alex's refund | `1A9159145Y307530G` | USD 15.00 | `COMPLETED` |
+| Sam's refund | `40G69568EX8715915` | USD 10.00 | `COMPLETED` |
+
+[The third readback record](evidence/paypal-readback-run3-2026-11-09.json) has the GET requests and HTTP statuses, without credentials or buyer details.
+
+The customers and studio are fictional. In the November 8 run, one sandbox buyer account represented all three customers; in both November 9 runs, each paid as a guest checkout with a published sandbox test card. No live money moved. The public practice demo simulates payments; use the [local setup](../README.md) and your own PayPal sandbox accounts to run a new payment flow.

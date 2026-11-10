@@ -31,6 +31,22 @@ A fresh local workspace, separate from the November 8 records, ran the whole flo
 
 Readback time: 2026-11-09T20:56:06.607Z. [The readback record](evidence/paypal-readback-run2-2026-11-09.json) keeps the GET requests, HTTP statuses, IDs and amounts, without credentials or buyer details. No live money moved.
 
+## PayPal sandbox, third run: Maya's checkout page (November 9, 2026)
+
+Another fresh local workspace ran the flow with Maya paying from her own checkout link (`/checkout/<token>`) rather than from the studio's screen. All three fictional customers again paid as guests with a published sandbox test card. Authenticated GET requests read every result back from PayPal:
+
+| Step | PayPal ID | Amount | Readback |
+| --- | --- | --- | --- |
+| Alex original prepayment | `8JD063356S391990W` | USD 60.00 | PARTIALLY_REFUNDED |
+| Sam original prepayment | `3WM404951U5130021` | USD 60.00 | PARTIALLY_REFUNDED |
+| Maya's order (intent AUTHORIZE) | `6TV371537K730864X` | USD 145.00 | COMPLETED |
+| Maya's authorization | `43V51968BD673011L` | USD 145.00 | CAPTURED |
+| Maya's capture | `5N9101921R436373R` | USD 145.00 | COMPLETED |
+| Partial refund to Alex | `1A9159145Y307530G` | USD 15.00 | COMPLETED |
+| Partial refund to Sam | `40G69568EX8715915` | USD 10.00 | COMPLETED |
+
+Readback time: 2026-11-10T00:13:12.978Z. [The readback record](evidence/paypal-readback-run3-2026-11-09.json) keeps the GET requests, HTTP statuses, IDs and amounts, without credentials or buyer details. No live money moved.
+
 ## AI, account-backed
 
 Eight synthetic messages were sent to `gemini-2.5-flash` through the same extraction function used by the application. All eight returned the expected alternatives and clarification behavior:
